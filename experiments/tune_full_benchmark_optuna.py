@@ -60,7 +60,7 @@ def resolve_algorithm(algorithm: str) -> str:
         "c45": "entropy",
         "cart": "gini",
         "c5.0": "gain_ratio",
-        "c5": "gain_ratio",
+        "c50": "gain_ratio",
         "chaid": "chi_square",
         "entropy": "entropy",
         "gini": "gini",
@@ -70,7 +70,7 @@ def resolve_algorithm(algorithm: str) -> str:
     if algo not in mapping:
         raise ValueError(
             f"Unsupported algorithm '{algorithm}'. "
-            "Use one of: id3, c45, cart, c5.0, chaid, entropy, gini"
+            "Use one of: id3, c45, cart, c5.0, chaid, entropy, gini, gain_ratio, chi_square"
         )
     return mapping[algo]
 
@@ -157,6 +157,12 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Optuna tuner for full benchmark")
     p.add_argument("--datasets", nargs="*", default=None)
     p.add_argument("--targets", nargs="*", default=None)
+    p.add_argument(
+        "--ontology",
+        type=str,
+        default=None,
+        help="Force ontology for all tuning runs (e.g., dto, chebi, go, bao, mesh)",
+    )
     p.add_argument("--max-samples", type=int, default=500)
     p.add_argument("--seed", type=int, default=42)
 
@@ -279,6 +285,7 @@ def main() -> None:
 
     print(f"[OPTUNA] Tasks: {len(tasks)}")
     print(f"[OPTUNA] Metric: {args.metric}")
+    print(f"[OPTUNA] Ontology: {args.ontology or 'dataset default'}")
     print(f"[OPTUNA] Study: {args.study_name}")
     print(f"[OPTUNA] Storage: {storage_url}")
 
@@ -312,6 +319,7 @@ def main() -> None:
                 res = pipeline.run(
                     ds_name,
                     target=target,
+                    ontology_override=args.ontology,
                     max_samples=args.max_samples,
                     n_trees=n_trees,
                     n_ants_per_tree=n_ants,

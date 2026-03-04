@@ -107,8 +107,30 @@ class OntologyRouter:
             )
         return dict(self._ontologies[name])
 
-    def get_required_ontologies(self, dataset_name: str) -> List[str]:
-        """Return the single ontology needed for *dataset_name* (as a list)."""
+    def get_required_ontologies(
+        self,
+        dataset_name: str,
+        *,
+        ontology_override: Optional[str] = None,
+    ) -> List[str]:
+        """Return ontology list for *dataset_name*.
+
+        Parameters
+        ----------
+        dataset_name : str
+            Dataset name.
+        ontology_override : str | None
+            If provided, force this ontology regardless of dataset default.
+        """
+        if ontology_override:
+            onto_name = ontology_override.lower()
+            if onto_name not in self._ontologies:
+                raise KeyError(
+                    f"Unknown ontology '{ontology_override}'. "
+                    f"Available: {self.available_ontologies}"
+                )
+            return [onto_name]
+
         ds_cfg = self.get_dataset_config(dataset_name)
         onto = ds_cfg.get("ontology")
         if onto:
@@ -116,11 +138,20 @@ class OntologyRouter:
         # backward compat: legacy "ontologies" array
         return list(ds_cfg.get("ontologies", ["dto"]))
 
-    def get_bridge_domain(self, dataset_name: str) -> str:
+    def get_bridge_domain(
+        self,
+        dataset_name: str,
+        *,
+        ontology_override: Optional[str] = None,
+    ) -> str:
         """Return bridge domain hint for *dataset_name*.
 
         Returns ``"chebi"`` or ``"anchor"``.
         """
+        if ontology_override:
+            # 현재 브릿지는 chebi 도메인만 별도 처리, 나머지는 anchor 사용
+            return "chebi" if ontology_override.lower() == "chebi" else "anchor"
+
         ds_cfg = self.get_dataset_config(dataset_name)
         return ds_cfg.get("bridge_domain", "anchor")
 
@@ -129,6 +160,7 @@ class OntologyRouter:
         dataset_name: str,
         *,
         extra_ontologies: Optional[List[str]] = None,
+        ontology_override: Optional[str] = None,
     ) -> nx.DiGraph:
         """Load and return the single ontology graph for *dataset_name*.
 
@@ -142,7 +174,9 @@ class OntologyRouter:
         -------
         nx.DiGraph
         """
-        required = self.get_required_ontologies(dataset_name)
+        required = self.get_required_ontologies(
+            dataset_name, ontology_override=ontology_override,
+        )
         if extra_ontologies:
             for o in extra_ontologies:
                 if o not in required:

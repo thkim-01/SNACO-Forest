@@ -426,6 +426,7 @@ class ToxicityDataPipeline:
         dataset_name: str,
         *,
         target: Optional[str] = None,
+        ontology_override: Optional[str] = None,
         max_samples: int = 0,
         n_trees: Optional[int] = None,
         n_ants_per_tree: Optional[int] = None,
@@ -444,6 +445,8 @@ class ToxicityDataPipeline:
             데이터셋 이름.
         target : str | None
             멀티타겟 데이터셋의 타겟명.
+        ontology_override : str | None
+            데이터셋 기본 매핑 대신 강제로 사용할 온톨로지 이름.
         max_samples : int
             최대 샘플 수 (0=무제한).
         n_trees, n_ants_per_tree, n_generations, seed : int | None
@@ -549,9 +552,15 @@ class ToxicityDataPipeline:
 
         # ── 4. 온톨로지 라우팅 & 그래프 (1:1) ──
         logger.info("Step 4/10: Routing ontology graph")
-        G_base = self.router.route(dataset_name)
+        G_base = self.router.route(
+            dataset_name,
+            ontology_override=ontology_override,
+        )
         G = copy.deepcopy(G_base)
-        bridge_domain = self.router.get_bridge_domain(dataset_name)
+        bridge_domain = self.router.get_bridge_domain(
+            dataset_name,
+            ontology_override=ontology_override,
+        )
 
         # ── 5. Feature → Ontology 브릿지 (domain-aware) ──
         logger.info("Step 5/10: Building feature-ontology bridge")
@@ -611,7 +620,10 @@ class ToxicityDataPipeline:
             "n_graph_edges": G.number_of_edges(),
             "n_feature_nodes": feature_node_count,
             "heuristic_profile": heuristics.profile,
-            "ontologies": self.router.get_required_ontologies(dataset_name),
+            "ontologies": self.router.get_required_ontologies(
+                dataset_name,
+                ontology_override=ontology_override,
+            ),
             "criterion": _criterion,
             "jump_penalty_base": _jump_penalty_base,
             "jump_gamma": _jump_gamma,

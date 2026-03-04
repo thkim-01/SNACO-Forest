@@ -162,6 +162,12 @@ def parse_args():
         help="Target names to run (only with single dataset)",
     )
     p.add_argument(
+        "--ontology",
+        type=str,
+        default=None,
+        help="Force ontology for all runs (e.g., dto, chebi, go, bao, mesh)",
+    )
+    p.add_argument(
         "--max-samples",
         type=int,
         default=0,
@@ -250,6 +256,7 @@ def run_benchmark(args):
     log(f"  Timestamp : {TIMESTAMP}")
     log(f"  Datasets  : {args.datasets or 'ALL'}")
     log(f"  Targets   : {args.targets or 'ALL per dataset'}")
+    log(f"  Ontology  : {args.ontology or 'dataset default'}")
     log(f"  MaxSamples: {args.max_samples or 'unlimited'}")
     log(f"  Seed      : {args.seed}")
     log(f"  NTrees    : {args.n_trees or 'config default'}")
@@ -324,6 +331,7 @@ def run_benchmark(args):
             result = pipeline.run(
                 ds_name,
                 target=target,
+                ontology_override=args.ontology,
                 max_samples=args.max_samples,
                 n_trees=args.n_trees,
                 n_ants_per_tree=args.n_ants_per_tree,
