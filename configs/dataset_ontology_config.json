@@ -1,0 +1,370 @@
+{
+  "_comment": "ACO-Semantic-Forest: strict 1:1 dataset -> ontology routing (no composite graphs)",
+  "datasets": {
+    "bbbp": {
+      "file": "data/bbbp/BBBP.csv",
+      "smiles_col": "smiles",
+      "label_col": "p_np",
+      "task": "classification",
+      "description": "Blood-Brain Barrier Penetration",
+      "n_classes": 2,
+      "ontology": "chebi",
+      "bridge_domain": "chebi",
+      "heuristic_profile": "physicochemical_prior",
+      "prior_bounds": {
+        "tpsa": {
+          "low": 0,
+          "high": 90,
+          "comment": "BBB penetration TPSA < 90 A^2"
+        },
+        "logp": {
+          "low": -0.5,
+          "high": 5.0,
+          "comment": "Lipinski LogP range for CNS drugs"
+        },
+        "molecular_weight": {
+          "low": 150,
+          "high": 500,
+          "comment": "MW < 500 for BBB"
+        }
+      }
+    },
+    "bace": {
+      "file": "data/bace/bace.csv",
+      "smiles_col": "smiles",
+      "label_col": "Class",
+      "task": "classification",
+      "description": "Beta-secretase 1 (BACE-1) Inhibitor",
+      "n_classes": 2,
+      "ontology": "dto",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "binding_pocket",
+      "extra_feature_cols": [
+        "MW",
+        "AlogP",
+        "HBA",
+        "HBD",
+        "RB",
+        "HeavyAtomCount",
+        "PSA",
+        "MR",
+        "RingCount"
+      ],
+      "pocket_features": {
+        "s1_occupancy": {
+          "proxy_features": [
+            "num_aromatic_rings",
+            "logp"
+          ],
+          "comment": "S1 pocket hydrophobic occupancy"
+        },
+        "s3_occupancy": {
+          "proxy_features": [
+            "num_hba",
+            "tpsa"
+          ],
+          "comment": "S3 pocket H-bond acceptor region"
+        },
+        "asp32_interaction": {
+          "proxy_features": [
+            "num_hbd",
+            "num_nitrogens"
+          ],
+          "comment": "Asp32 catalytic residue H-bond"
+        },
+        "asp228_interaction": {
+          "proxy_features": [
+            "num_oxygens",
+            "num_hba"
+          ],
+          "comment": "Asp228 catalytic residue interaction"
+        }
+      }
+    },
+    "clintox": {
+      "file": "data/clintox/clintox.csv",
+      "smiles_col": "smiles",
+      "label_col": "CT_TOX",
+      "task": "classification",
+      "description": "Clinical Toxicity",
+      "n_classes": 2,
+      "all_targets": ["CT_TOX", "FDA_APPROVED"],
+      "ontology": "chebi",
+      "bridge_domain": "chebi",
+      "heuristic_profile": "fda_cramer_static",
+      "static_pheromone": {
+        "fda_edt_questions": [
+          {
+            "level": 0,
+            "question": "Is it a new molecular entity?",
+            "feature": "molecular_weight",
+            "threshold": 500
+          },
+          {
+            "level": 1,
+            "question": "Reactive functional groups?",
+            "feature": "num_halogens",
+            "threshold": 3
+          },
+          {
+            "level": 2,
+            "question": "Known pharmacophore toxicity?",
+            "feature": "num_aromatic_rings",
+            "threshold": 4
+          },
+          {
+            "level": 3,
+            "question": "Genotoxicity alert?",
+            "feature": "num_nitrogens",
+            "threshold": 5
+          },
+          {
+            "level": 4,
+            "question": "Dose-related toxicity?",
+            "feature": "logp",
+            "threshold": 3.5
+          },
+          {
+            "level": 5,
+            "question": "Organ-specific effects?",
+            "feature": "tpsa",
+            "threshold": 140
+          }
+        ],
+        "cramer_classes": {
+          "class_I_low": {
+            "molecular_weight_max": 200,
+            "logp_max": 1.5,
+            "comment": "Simple structure, low concern"
+          },
+          "class_II_medium": {
+            "molecular_weight_max": 400,
+            "logp_max": 3.5,
+            "comment": "Moderate complexity"
+          },
+          "class_III_high": {
+            "molecular_weight_min": 400,
+            "num_rings_min": 3,
+            "comment": "Complex, high concern"
+          }
+        },
+        "pheromone_multiplier": 5.0
+      }
+    },
+    "hiv": {
+      "file": "data/hiv/HIV.csv",
+      "smiles_col": "smiles",
+      "label_col": "HIV_active",
+      "task": "classification",
+      "description": "HIV replication inhibition",
+      "n_classes": 2,
+      "ontology": "bao",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "hierarchical_go",
+      "hierarchy_config": {
+        "source_ontology": "bao",
+        "gate_levels": [
+          {
+            "depth": 0,
+            "concept": "bioassay",
+            "comment": "Top-level BAO bioassay"
+          },
+          {
+            "depth": 1,
+            "concept": "cell_based_assay",
+            "comment": "BAO cell-based assay"
+          },
+          {
+            "depth": 2,
+            "concept": "cell_viability_assay",
+            "comment": "BAO cell viability assay"
+          }
+        ],
+        "max_depth_without_gate": 2,
+        "gate_pheromone_bonus": 3.0
+      },
+      "max_samples": 20000
+    },
+    "tox21": {
+      "file": "data/tox21/tox21.csv",
+      "smiles_col": "smiles",
+      "label_col": "NR-AhR",
+      "task": "classification",
+      "description": "Toxicology in the 21st Century (12 assay targets)",
+      "n_classes": 2,
+      "all_targets": [
+        "NR-AR",
+        "NR-AR-LBD",
+        "NR-AhR",
+        "NR-Aromatase",
+        "NR-ER",
+        "NR-ER-LBD",
+        "NR-PPAR-gamma",
+        "SR-ARE",
+        "SR-ATAD5",
+        "SR-HSE",
+        "SR-MMP",
+        "SR-p53"
+      ],
+      "ontology": "go",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "hierarchical_aop",
+      "hierarchy_config": {
+        "source_ontology": "go",
+        "gate_levels": [
+          {
+            "depth": 0,
+            "concept": "biological_process",
+            "comment": "GO biological_process"
+          },
+          {
+            "depth": 1,
+            "concept": "cellular_process",
+            "comment": "GO cellular_process"
+          },
+          {
+            "depth": 2,
+            "concept": "cell_death",
+            "comment": "GO cell death / toxicity link"
+          }
+        ],
+        "max_depth_without_gate": 2,
+        "gate_pheromone_bonus": 2.5
+      }
+    },
+    "sider": {
+      "file": "data/sider/sider.csv",
+      "smiles_col": "smiles",
+      "label_col": "Hepatobiliary disorders",
+      "task": "classification",
+      "description": "Side Effect Resource (27 MedDRA SOC targets)",
+      "n_classes": 2,
+      "all_targets": [
+        "Hepatobiliary disorders",
+        "Metabolism and nutrition disorders",
+        "Product issues",
+        "Eye disorders",
+        "Investigations",
+        "Musculoskeletal and connective tissue disorders",
+        "Gastrointestinal disorders",
+        "Social circumstances",
+        "Immune system disorders",
+        "Reproductive system and breast disorders",
+        "Neoplasms benign, malignant and unspecified (incl cysts and polyps)",
+        "General disorders and administration site conditions",
+        "Endocrine disorders",
+        "Surgical and medical procedures",
+        "Vascular disorders",
+        "Blood and lymphatic system disorders",
+        "Skin and subcutaneous tissue disorders",
+        "Congenital, familial and genetic disorders",
+        "Infections and infestations",
+        "Respiratory, thoracic and mediastinal disorders",
+        "Psychiatric disorders",
+        "Renal and urinary disorders",
+        "Pregnancy, puerperium and perinatal conditions",
+        "Ear and labyrinth disorders",
+        "Cardiac disorders",
+        "Nervous system disorders",
+        "Injury, poisoning and procedural complications"
+      ],
+      "ontology": "mesh",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "hierarchical_meddra",
+      "hierarchy_config": {
+        "source_ontology": "mesh",
+        "gate_levels": [
+          {
+            "depth": 0,
+            "concept": "system_organ_class",
+            "comment": "MedDRA SOC level"
+          },
+          {
+            "depth": 1,
+            "concept": "high_level_group_term",
+            "comment": "MedDRA HLGT"
+          },
+          {
+            "depth": 2,
+            "concept": "preferred_term",
+            "comment": "MedDRA PT"
+          }
+        ],
+        "max_depth_without_gate": 2,
+        "gate_pheromone_bonus": 2.0
+      }
+    }
+  },
+  "ontologies": {
+    "dto": {
+      "file": "ontology/DTO.xrdf",
+      "format": "xml",
+      "size_class": "small",
+      "description": "Drug Target Ontology",
+      "estimated_nodes": 10042,
+      "estimated_edges": 11935
+    },
+    "chebi": {
+      "file": "ontology/chebi.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "ChEBI (Chemical Entities of Biological Interest)",
+      "max_triples": 500000,
+      "extract_subgraph": true,
+      "root_classes": [
+        "CHEBI:24431",
+        "CHEBI:23367"
+      ],
+      "comment": "chemical entity + molecular entity subtrees"
+    },
+    "go": {
+      "file": "ontology/go.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Gene Ontology (biological_process subtree)",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [
+        "GO:0008150"
+      ],
+      "comment": "biological_process subtree only"
+    },
+    "mesh": {
+      "file": "ontology/mesh.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "MeSH (Medical Subject Headings)",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [
+        "D000820"
+      ],
+      "comment": "Anatomy/Diseases subtree"
+    },
+    "bao": {
+      "file": "ontology/bao_complete.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "BioAssay Ontology",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [
+        "BAO:0000015"
+      ],
+      "comment": "bioassay subtree for HIV"
+    }
+  },
+  "defaults": {
+    "n_trees": 8,
+    "n_ants_per_tree": 25,
+    "n_generations": 3,
+    "elite_ratio": 0.2,
+    "evaporation_rate": 0.1,
+    "test_size": 0.2,
+    "seed": 42,
+    "max_path_length": 5,
+    "max_steps": 80,
+    "min_gain": 0.005,
+    "bootstrap_ratio": 0.8
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "ID3",
+  "description": "Entropy + Information Gain split criterion",
+  "split_criterion": "information_gain",
+  "n_estimators": 5,
+  "max_depth": 10,
+  "min_samples_split": 20,
+  "min_samples_leaf": 5
+}

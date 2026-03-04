@@ -1,0 +1,9 @@
+{
+  "name": "C4.5",
+  "description": "Entropy + Gain Ratio split criterion",
+  "split_criterion": "gain_ratio",
+  "n_estimators": 5,
+  "max_depth": 10,
+  "min_samples_split": 20,
+  "min_samples_leaf": 5
+}

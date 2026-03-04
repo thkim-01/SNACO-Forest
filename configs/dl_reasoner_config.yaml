@@ -1,0 +1,158 @@
+reasoning:
+  engine: none
+  infer_property_values: false
+  enable_toxicity_seed_rules: true
+
+ontology_paths:
+  BAO: ontology/bao_complete.owl
+  DTO: ontology/DTO.owl
+  GO: ontology/go.owl
+  CHEBI: ontology/chebi.owl
+  PATO: ontology/pato.owl
+  MESH: ontology/mesh.owl
+  THESAURUS: ontology/Thesaurus.owl
+
+dataset_primary_ontology:
+  bbbp: ontology/chebi.owl
+  bace: ontology/DTO.owl
+  clintox: ontology/DTO.owl
+  hiv: ontology/bao_complete.owl
+  tox21: ontology/bao_complete.owl
+  sider: ontology/mesh.owl
+
+dataset_ontology_context:
+  tox21: [BAO, DTO, GO, CHEBI, PATO]
+  bace: [DTO, CHEBI]
+  clintox: [MESH, BAO, GO, CHEBI, THESAURUS]
+  hiv: [BAO, GO, CHEBI]
+  sider: [MESH, THESAURUS, PATO, CHEBI]
+  bbbp: [CHEBI]
+
+# ============================================================================
+# 데이터셋별 트리 하이퍼파라미터 (과적합 방지 최적화)
+# ============================================================================
+dataset_tree_params:
+  bbbp:
+    max_depth: 5
+    min_samples_split: 10
+    min_samples_leaf: 5
+    class_weight: balanced
+  bace:
+    max_depth: 6
+    min_samples_split: 8
+    min_samples_leaf: 4
+    class_weight: balanced
+  clintox:
+    max_depth: 4
+    min_samples_split: 10
+    min_samples_leaf: 5
+    class_weight: balanced
+  hiv:
+    max_depth: 10
+    min_samples_split: 15
+    min_samples_leaf: 8
+    class_weight: balanced
+  tox21:
+    max_depth: 8
+    min_samples_split: 12
+    min_samples_leaf: 6
+    class_weight: balanced
+  sider:
+    max_depth: 6
+    min_samples_split: 10
+    min_samples_leaf: 5
+    class_weight: balanced
+
+# ============================================================================
+# 데이터셋별 온톨로지 정제 프로파일 (v2: 확장 속성 포함)
+# ============================================================================
+dataset_refinement_profile:
+  bbbp:
+    allowed_ref_types: [concept, cardinality, domain, qualification]
+    allowed_object_properties: [hasFunctionalGroupRel, hasRingSystem, is_substrate_of, has_physicochemical_risk]
+    allowed_data_properties:
+      - hasMolecularWeight
+      - hasLogP
+      - hasTPSA
+      - hasNumHBA
+      - hasNumHBD
+      - hasNumRotatableBonds
+      - hasNumRings
+      - hasNumAromaticRings
+      - hasAromaticity
+      - hasMolarRefractivity
+      - hasNPlusOCount
+      - hasFormalCharge
+    max_qualification_concepts_per_property: 32
+  bace:
+    allowed_ref_types: [concept, cardinality, domain, qualification, conjunction]
+    allowed_object_properties: [hasFunctionalGroupRel, hasRingSystem, hasBindingCore, interactsWithResidue]
+    allowed_data_properties:
+      - hasMolecularWeight
+      - hasLogP
+      - hasTPSA
+      - hasNumHBA
+      - hasNumHBD
+      - hasNumRotatableBonds
+      - hasNumRings
+      - hasNumAromaticRings
+      - hasMolarRefractivity
+    max_qualification_concepts_per_property: 32
+  clintox:
+    allowed_ref_types: [concept, cardinality, domain, qualification, conjunction]
+    allowed_object_properties: [hasFunctionalGroupRel, hasRingSystem, isMemberOfEDTClass, isMemberOfCramerClass, hasReactiveToxicophore]
+    allowed_data_properties:
+      - hasMolecularWeight
+      - hasLogP
+      - hasTPSA
+      - hasNumHBA
+      - hasNumHBD
+      - hasNumRotatableBonds
+      - hasNumRings
+      - hasNumAromaticRings
+      - hasNPlusOCount
+    max_qualification_concepts_per_property: 24
+  hiv:
+    allowed_ref_types: [concept, cardinality, domain, qualification]
+    allowed_object_properties: [hasFunctionalGroupRel, hasRingSystem, inhibitsStep, targetsProtein]
+    allowed_data_properties:
+      - hasMolecularWeight
+      - hasLogP
+      - hasTPSA
+      - hasNumHBA
+      - hasNumHBD
+      - hasNumRotatableBonds
+      - hasNumRings
+      - hasNumAromaticRings
+      - hasFsp3
+    max_qualification_concepts_per_property: 24
+  tox21:
+    allowed_ref_types: [concept, cardinality, domain, qualification, conjunction]
+    allowed_object_properties: [hasFunctionalGroupRel, hasRingSystem, hasAOP, is_involved_in_pathway]
+    allowed_data_properties:
+      - hasMolecularWeight
+      - hasLogP
+      - hasTPSA
+      - hasNumHBA
+      - hasNumHBD
+      - hasNumRotatableBonds
+      - hasNumRings
+      - hasNumAromaticRings
+      - hasNPlusOCount
+      - hasFormalCharge
+    max_qualification_concepts_per_property: 24
+  sider:
+    allowed_ref_types: [concept, cardinality, domain, qualification]
+    allowed_object_properties: [hasFunctionalGroupRel, hasRingSystem, hasAdverseLLT, hasAdversePT, hasAdverseSOC, mapsToPrimarySOC]
+    allowed_data_properties:
+      - hasMolecularWeight
+      - hasLogP
+      - hasTPSA
+      - hasNumHBA
+      - hasNumHBD
+      - hasNumRotatableBonds
+      - hasNumRings
+      - hasNumAromaticRings
+      - hasNPlusOCount
+      - hasMolarRefractivity
+    max_qualification_concepts_per_property: 20
