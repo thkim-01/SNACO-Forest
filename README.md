@@ -1,20 +1,22 @@
 # Semantic-Forest-lab
 
-SMILES 기반 분자 구조를 **Drug Target Ontology (DTO)** 기반 온톨로지로 변환한 뒤,
-설명가능한 결정트리를 **휴리스틱 서치 기반 배깅(bootstrap aggregating)** 으로 학습해 분류 성능을 높이는 실험 레포입니다.
+SMILES 기반 분자 구조를 **데이터셋별 도메인 온톨로지(ChEBI/DTO/BAO/GO/MeSH)** 로 변환한 뒤,
+설명가능한 결정트리를 **개미군집 최적화(ACO) 기반 배깅(bootstrap aggregating)** 으로 학습해 분류 성능을 높이는 실험 레포입니다.
 
 이 레포는 알고리즘별 버전을 **하나의 프로젝트 안에서** 관리합니다:
 
 - **ID3**: Information Gain (`information_gain`)
 - **C4.5**: Gain Ratio (`gain_ratio`)
+- **C5.0**: Gain Ratio (`gain_ratio`, C4.5 계열 고도화)
 - **CART**: Gini impurity (`gini`)
+- **CHAID**: Chi-square (`chi_square`)
 
 ## 주요 특징
 
 - **단일 레포 다중 알고리즘 버전 관리**: ID3/C4.5/CART/ACO 공존
 - **알고리즘 프로파일 기반 실행**: `configs/algorithms/*.json`
-- **온톨로지 기반**: Drug Target Ontology를 활용한 의미론적 결정트리
-- **Heuristic Search + Bagging**: 노드 분할 후보를 휴리스틱으로 축소해 탐색 비용 절감
+- **온톨로지 기반**: 데이터셋별 도메인 온톨로지를 사용하는 의미론적 결정트리
+- **ACO + Bagging**: 개미군집 최적화(ACO)로 규칙/경로 탐색 후 배깅 앙상블 구성
 - **설명 가능성**: 의사결정 과정을 명확하게 추적 가능
 
 단일 트리로 학습하는 버전은 별도 레포로 분리했습니다:
@@ -95,7 +97,7 @@ python experiments/verify_semantic_forest_multi.py --datasets bbbp,clintox
 # 트리 개수 및 깊이 조정
 python experiments/verify_semantic_forest_multi.py --n-estimators 50 --max-depth 8
 
-# 휴리스틱 탐색 강도 조정
+# 개미군집 최적화(ACO) 탐색 강도 조정
 python experiments/verify_semantic_forest_multi.py --search-strategy heuristic --max-candidate-refinements 64 --candidate-fraction 0.35 --heuristic-probe-samples 128
 
 # 분할 기준 변경
@@ -140,17 +142,29 @@ experiments/
 - **분할 기준**: Gain Ratio
 - **핵심 아이디어**: Information Gain을 split info로 정규화
 
+### C5.0
+
+- **분할 기준**: Gain Ratio (`gain_ratio`)
+- **핵심 아이디어**: C4.5의 Gain Ratio 기반 분할을 계승한 실험 프로파일
+- **구현 매핑**: 러너 옵션 `--algorithm c5.0` / `--algorithm c50` → `gain_ratio`
+
 ### CART
 
 - **분할 기준**: Gini impurity
 - **Gini impurity**: $Gini = 1 - \sum_{i=1}^{n} p_i^2$
 
+### CHAID
+
+- **분할 기준**: Chi-square (`chi_square`)
+- **핵심 아이디어**: 분할 전/후 클래스 분포 차이를 카이제곱 통계량으로 평가
+- **구현 매핑**: 러너 옵션 `--algorithm chaid` → `chi_square`
+
 ### 처리 과정
 
 1. **입력**: `data/` 디렉토리의 CSV 파일 (예: `data/bbbp/BBBP.csv`)
 2. **전처리**: SMILES → RDKit을 통한 분자 피처 추출
-3. **온톨로지 변환**: DTO 기반 온톨로지 인스턴스 생성
-4. **학습**: 휴리스틱 분할 탐색 + 선택한 분할 기준(ID3/C4.5/CART) 또는 ACO 탐색으로 여러 트리 학습 (배깅)
+3. **온톨로지 변환**: 데이터셋별 1:1 도메인 온톨로지 매핑 기반 그래프 생성
+4. **학습**: 개미군집 최적화(ACO) 기반 탐색 + 선택한 분할 기준(ID3/C4.5/C5.0/CART/CHAID)으로 여러 트리 학습 (배깅)
 5. **평가**: AUC-ROC, Accuracy 등 성능 지표 계산
 
 ## 데이터셋
@@ -163,6 +177,19 @@ experiments/
 - Tox21 (Toxicity prediction)
 - SIDER (Side effects)
 - 기타 분자 특성 예측 데이터셋
+
+### 데이터셋 ↔ 온톨로지 대응 (strict 1:1)
+
+| Dataset | Ontology | Bridge Domain |
+|---|---|---|
+| BBBP | ChEBI | chebi |
+| BACE | DTO | anchor |
+| ClinTox | ChEBI | chebi |
+| HIV | BAO | anchor |
+| Tox21 | GO | anchor |
+| SIDER | MeSH | anchor |
+
+> 기준 설정: `configs/dataset_ontology_config.json`, 라우팅 정책: `src/aco/ontology_router.py`
 
 ## 출력 결과
 
