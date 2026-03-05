@@ -38,6 +38,23 @@ pip install -r requirements.txt
 # pip install torch
 ```
 
+## 데이터/온톨로지 다운로드
+
+대용량 파일(`data/`, `ontology/`)은 GitHub 저장소에 포함하지 않고 외부 링크로 제공합니다.
+
+- Ontology 다운로드: https://drive.google.com/drive/folders/1-Ff2iOEhcAB4VRGPaHCdSWSEHFrM4T8X?usp=drive_link
+- Dataset 다운로드: https://drive.google.com/drive/folders/1Aw2UvH8cCp43BiHUGRidCcudNb30pMkw?usp=drive_link
+
+다운로드 후 프로젝트 루트에 아래 구조로 배치하세요.
+
+```text
+ACO-Semantic-Forest/
+	data/
+		...
+	ontology/
+		...
+```
+
 ## 빠른 시작 (Quick Start)
 
 ### 0. 알고리즘 버전 실행 (권장)
