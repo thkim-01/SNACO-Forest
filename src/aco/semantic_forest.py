@@ -139,12 +139,17 @@ class SemanticForest:
     min_samples_leaf : int
         분할 후 최소 리프 샘플 수. 기본 10.
     criterion : str
-        분할 기준. ``"entropy"`` | ``"gini"``. 기본 ``"entropy"``.
+        분할 기준. ``"entropy"`` | ``"gini"`` | ``"pig"`` | ``"semantic_similarity"`` | ``"pig_semantic"``.
+        기본 ``"entropy"``.
     jump_penalty_base : float
         계층 건너뛰기 휴리스틱 감가율 p (0 <= p <= 1). 기본 0.9.
     jump_gamma : float
         계층 건너뛰기 페널티 강도 γ. 기본 1.0.
         γ=0이면 페널티 없음, γ→∞이면 건너뛰기 억제.
+    pig_alpha : float
+        PIG의 ATI 가중치 α. 기본 1.0.
+    semantic_weight : float
+        Semantic Similarity 가중치 (0~1). 기본 0.3.
     n_generations : int
         세대 수 — 페로몬 갱신 반복 횟수. 기본 3.
     seed : int | None
@@ -178,6 +183,8 @@ class SemanticForest:
         criterion: str = "entropy",
         jump_penalty_base: float = 0.9,
         jump_gamma: float = 1.0,
+        pig_alpha: float = 1.0,
+        semantic_weight: float = 0.3,
         n_generations: int = 3,
         seed: Optional[int] = None,
     ) -> None:
@@ -198,6 +205,8 @@ class SemanticForest:
         self.criterion = criterion
         self.jump_penalty_base = jump_penalty_base
         self.jump_gamma = jump_gamma
+        self.pig_alpha = pig_alpha
+        self.semantic_weight = semantic_weight
         self.n_generations = n_generations
         self.seed = seed
 
@@ -308,6 +317,8 @@ class SemanticForest:
                     criterion=self.criterion,
                     jump_penalty_base=self.jump_penalty_base,
                     jump_gamma=self.jump_gamma,
+                    pig_alpha=self.pig_alpha,
+                    semantic_weight=self.semantic_weight,
                     seed=(self.seed + gen * self.n_trees + t)
                     if self.seed is not None
                     else None,

@@ -81,6 +81,8 @@ class LogicSDTLearner:
         enable_toxicity_seed_rules: bool = False,
         reasoner_engine: str = 'none',
         reasoner_infer_property_values: bool = False,
+        pig_alpha: float = 1.0,
+        semantic_weight: float = 0.3,
     ):
         self.onto_manager = ontology_manager
         self.max_depth = max_depth
@@ -110,6 +112,26 @@ class LogicSDTLearner:
         self.enable_toxicity_seed_rules = enable_toxicity_seed_rules
         self.reasoner_engine = reasoner_engine
         self.reasoner_infer_property_values = reasoner_infer_property_values
+        self.pig_alpha = float(pig_alpha)
+        self.semantic_weight = float(semantic_weight)
+
+        # TaxonomyScorer: PIG / SemanticSimilarity 분할 기준 지원
+        self._taxonomy_scorer = None
+        if split_criterion in ('pig', 'semantic_similarity', 'pig_semantic'):
+            try:
+                from src.sdt.taxonomy_scorer import TaxonomyScorer
+                onto = getattr(ontology_manager, 'onto', None)
+                self._taxonomy_scorer = TaxonomyScorer(
+                    ontology=onto,
+                    alpha=self.pig_alpha,
+                )
+                if self.verbose:
+                    print(f"[TaxonomyScorer] Initialized (alpha={self.pig_alpha}, "
+                          f"semantic_weight={self.semantic_weight})")
+            except Exception as e:
+                if self.verbose:
+                    print(f"[WARN] TaxonomyScorer init failed: {e}. "
+                          "Falling back to entropy-based IG.")
 
 
         static_refs = None
@@ -269,10 +291,26 @@ class LogicSDTLearner:
         
         return predictions
 
-    def _calculate_information_gain(self, parent_instances, left_instances, right_instances):
-        """Calculate information gain for a split"""
+    def _calculate_information_gain(self, parent_instances, left_instances, right_instances,
+                                    refinement=None):
+        """Calculate information gain for a split.
+
+        Supports criteria: information_gain, gini, pig, semantic_similarity, pig_semantic.
+        """
         if self.split_criterion == 'gini':
             return self._calculate_gini_gain(parent_instances, left_instances, right_instances)
+        elif self.split_criterion == 'pig':
+            return self._calculate_pig_gain(
+                parent_instances, left_instances, right_instances, refinement
+            )
+        elif self.split_criterion == 'semantic_similarity':
+            return self._calculate_semantic_sim_gain(
+                parent_instances, left_instances, right_instances, refinement
+            )
+        elif self.split_criterion == 'pig_semantic':
+            return self._calculate_pig_semantic_gain(
+                parent_instances, left_instances, right_instances, refinement
+            )
         else:
             return self._calculate_entropy_gain(parent_instances, left_instances, right_instances)
 
@@ -292,7 +330,9 @@ class LogicSDTLearner:
         if len(left_instances) < self.min_samples_leaf or len(right_instances) < self.min_samples_leaf:
             return None
 
-        gain = self._calculate_information_gain(parent_instances, left_instances, right_instances)
+        gain = self._calculate_information_gain(
+            parent_instances, left_instances, right_instances, refinement=refinement
+        )
         return gain, left_instances, right_instances
 
     def _find_best_refinement_exhaustive(self, node: TreeNode, candidate_refinements: List):
@@ -523,3 +563,83 @@ class LogicSDTLearner:
         if hasattr(inst, 'hasLabel'):
             return inst.hasLabel[0] if inst.hasLabel else None
         return getattr(inst, 'label', None)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # PIG (Penalized Information Gain) 분할 기준
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _get_instance_concepts(self, inst) -> list:
+        """인스턴스에서 관련 온톨로지 개념(클래스)을 추출한다."""
+        concepts = []
+        for t in getattr(inst, 'is_a', []):
+            if hasattr(t, 'name') and hasattr(t, 'ancestors'):
+                concepts.append(t)
+        return concepts
+
+    def _calculate_pig_gain(self, parent, left, right, refinement=None):
+        """Penalized Information Gain.
+
+        PIG = IG × (1 + log(1 + α × ATI))
+
+        IG는 기본 entropy-based information gain.
+        ATI는 refinement가 참조하는 개념들의 평균 Taxonomic Informativeness.
+        """
+        import math
+
+        ig = self._calculate_entropy_gain(parent, left, right)
+
+        if self._taxonomy_scorer is None or refinement is None:
+            return ig
+
+        ati = self._taxonomy_scorer.compute_ati_for_refinement(refinement)
+        pf = math.log(1.0 + self.pig_alpha * ati)
+        return ig * (1.0 + pf)
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Semantic Similarity 기반 분할 기준
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _calculate_semantic_sim_gain(self, parent, left, right, refinement=None):
+        """Semantic Similarity 기반 분할 점수.
+
+        Score = (1 - w) × IG + w × Sim(A) × IG_scale
+
+        Sim(A) = Σ_u p_u × Sim(a_u)
+        각 부분집합의 intra-similarity를 크기 비율로 가중 합산한다.
+        """
+        ig = self._calculate_entropy_gain(parent, left, right)
+
+        if self._taxonomy_scorer is None:
+            return ig
+
+        sim_score = self._taxonomy_scorer.semantic_similarity_split_score(
+            left, right, self._get_instance_concepts
+        )
+
+        # IG 스케일에 맞추어 결합
+        score = ((1.0 - self.semantic_weight) * ig
+                 + self.semantic_weight * sim_score * max(ig, 0.001))
+        return score
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # PIG + Semantic Similarity 결합 분할 기준
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _calculate_pig_semantic_gain(self, parent, left, right, refinement=None):
+        """PIG + Semantic Similarity 결합 점수.
+
+        Score = (1 - w) × PIG + w × Sim(A) × IG_scale
+        """
+        pig = self._calculate_pig_gain(parent, left, right, refinement)
+
+        if self._taxonomy_scorer is None:
+            return pig
+
+        ig = self._calculate_entropy_gain(parent, left, right)
+        sim_score = self._taxonomy_scorer.semantic_similarity_split_score(
+            left, right, self._get_instance_concepts
+        )
+
+        score = ((1.0 - self.semantic_weight) * pig
+                 + self.semantic_weight * sim_score * max(ig, 0.001))
+        return score

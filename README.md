@@ -10,6 +10,9 @@ SMILES 기반 분자 구조를 **데이터셋별 도메인 온톨로지(ChEBI/DT
 - **C5.0**: Gain Ratio (`gain_ratio`, C4.5 계열 고도화)
 - **CART**: Gini impurity (`gini`)
 - **CHAID**: Chi-square (`chi_square`)
+- **PIG**: Penalized Information Gain (`pig`) — 온톨로지 계층 깊이 기반 IG 보정
+- **Semantic Similarity**: Wu-Palmer 유사도 기반 분할 (`semantic_similarity`)
+- **PIG+Semantic**: PIG와 유사도의 결합 (`pig_semantic`)
 
 ## 주요 특징
 
@@ -130,6 +133,11 @@ python experiments/verify_semantic_forest_multi.py --split-criterion information
 python experiments/verify_semantic_forest_multi.py --split-criterion gain_ratio
 python experiments/verify_semantic_forest_multi.py --split-criterion gini
 
+# PIG / Semantic Similarity 알고리즘
+python experiments/run_full_benchmark.py --algorithm pig --pig-alpha 1.5
+python experiments/run_full_benchmark.py --algorithm semantic_similarity
+python experiments/run_full_benchmark.py --algorithm pig_semantic --pig-alpha 1.0 --semantic-weight 0.3
+
 # 알고리즘 이름으로 실행 (권장)
 python experiments/verify_semantic_forest_multi.py --algorithm id3
 python experiments/verify_semantic_forest_multi.py --algorithm c45
@@ -184,12 +192,41 @@ experiments/
 - **핵심 아이디어**: 분할 전/후 클래스 분포 차이를 카이제곱 통계량으로 평가
 - **구현 매핑**: 러너 옵션 `--algorithm chaid` → `chi_square`
 
+### PIG (Penalized Information Gain)
+
+- **분할 기준**: 온톨로지 계층 깊이 기반 Taxonomic Informativeness로 Information Gain을 보정
+- **핵심 수식**:
+  - $IC(c) = -\log_2 P(c)$, where $P(c) = \frac{|\text{descendants}(c)|}{|\text{total concepts}|}$
+  - $TI(c) = IC(c) \times \frac{\text{depth}(c)}{\text{max\_depth}}$
+  - $ATI = \frac{1}{|C|} \sum_{c \in C} TI(c)$ (Average Taxonomic Informativeness)
+  - $PIG(S) = IG(S) \times (1 + \log(1 + \alpha \times ATI))$
+- **하이퍼파라미터**: `--pig-alpha` (기본값 1.0) — ATI 가중치
+- **구현 매핑**: `--algorithm pig` → `pig`
+- **특징**: 온톨로지 계층에서 더 구체적(깊은) 개념을 사용하는 분할에 높은 점수 부여
+
+### Semantic Similarity (의미적 유사도 기반 분할)
+
+- **분할 기준**: Wu-Palmer 유사도를 이용한 온톨로지 거리 기반 분할 점수
+- **핵심 수식**:
+  - $Sim_{WP}(a, b) = \frac{2 \times \text{depth}(LCA(a,b))}{\text{depth}(a) + \text{depth}(b)}$
+  - $Sim(A) = \sum_u p_u \times Sim_{avg}(a_u)$ (파티션별 가중 유사도 합)
+- **구현 매핑**: `--algorithm semantic_similarity` / `--algorithm semantic_sim` → `semantic_similarity`
+- **특징**: 같은 파티션에 속한 인스턴스들이 온톨로지적으로 유사한 분할을 선호
+
+### PIG + Semantic (결합)
+
+- **분할 기준**: PIG와 Semantic Similarity의 가중 결합
+- **핵심 수식**: $\text{Score} = (1 - w) \times PIG + w \times Sim(A) \times IG_{\max}$
+- **하이퍼파라미터**: `--pig-alpha` (기본값 1.0), `--semantic-weight` (기본값 0.3, 범위 0~1)
+- **구현 매핑**: `--algorithm pig_semantic` → `pig_semantic`
+- **특징**: 두 온톨로지 신호를 동시에 활용하여 분할 품질 극대화
+
 ### 처리 과정
 
 1. **입력**: `data/` 디렉토리의 CSV 파일 (예: `data/bbbp/BBBP.csv`)
 2. **전처리**: SMILES → RDKit을 통한 분자 피처 추출
 3. **온톨로지 변환**: 데이터셋별 1:1 도메인 온톨로지 매핑 기반 그래프 생성
-4. **학습**: 개미군집 최적화(ACO) 기반 탐색 + 선택한 분할 기준(ID3/C4.5/C5.0/CART/CHAID)으로 여러 트리 학습 (배깅)
+4. **학습**: 개미군집 최적화(ACO) 기반 탐색 + 선택한 분할 기준(ID3/C4.5/C5.0/CART/CHAID/PIG/Semantic Similarity)으로 여러 트리 학습 (배깅)
 5. **평가**: AUC-ROC, Accuracy 등 성능 지표 계산
 
 ## 데이터셋
@@ -231,7 +268,9 @@ experiments/
 - `--all-tasks`: 멀티태스크 데이터셋(Tox21, SIDER)의 모든 task를 평가
 - `--overwrite`: 기존 결과 CSV가 있으면 삭제 후 처음부터 다시 실행
 - `--datasets bbbp,clintox`: 지정한 데이터셋만 실행
-- `--algorithm id3|c45|cart|aco`: 알고리즘 프로파일 적용
+- `--algorithm id3|c45|cart|aco|pig|semantic_similarity|pig_semantic`: 알고리즘 프로파일 적용
+- `--pig-alpha 1.0`: PIG 알고리즘의 ATI 가중치 (기본값 1.0)
+- `--semantic-weight 0.3`: pig_semantic 결합 비중 (기본값 0.3, 범위 0~1)
 - `--search-strategy exhaustive|aco`: 노드 분할 후보 탐색 전략 선택
 - `--search-strategy heuristic|exhaustive`: 분할 후보 탐색 방식 선택
 - `--max-candidate-refinements`: 휴리스틱 모드에서 노드당 평가할 후보 상한

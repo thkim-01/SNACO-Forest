@@ -352,6 +352,86 @@
         "BAO:0000015"
       ],
       "comment": "bioassay subtree for HIV"
+    },
+    "pato": {
+      "file": "ontology/pato.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Phenotype and Trait Ontology",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "thesaurus": {
+      "file": "ontology/Thesaurus.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "NCI Thesaurus",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override (Theasaurus/Thesaurus)"
+    },
+    "sio": {
+      "file": "ontology/sio.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Semanticscience Integrated Ontology",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "bero": {
+      "file": "ontology/bero.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "BERO Ontology",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "cheminf": {
+      "file": "ontology/cheminf.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "CHEMINF Ontology",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "oce": {
+      "file": "ontology/oce-merged.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Ontology of Chemical Entities (OCE, merged)",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "dinto": {
+      "file": "ontology/dinto_1.3.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Drug-Drug Interaction Ontology (DINTO)",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "dron": {
+      "file": "ontology/dron.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Drug Ontology (DRON)",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
     }
   },
   "defaults": {

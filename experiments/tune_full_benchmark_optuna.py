@@ -66,11 +66,16 @@ def resolve_algorithm(algorithm: str) -> str:
         "gini": "gini",
         "gain_ratio": "gain_ratio",
         "chi_square": "chi_square",
+        "pig": "pig",
+        "semantic_similarity": "semantic_similarity",
+        "semantic_sim": "semantic_similarity",
+        "pig_semantic": "pig_semantic",
     }
     if algo not in mapping:
         raise ValueError(
             f"Unsupported algorithm '{algorithm}'. "
-            "Use one of: id3, c45, cart, c5.0, chaid, entropy, gini, gain_ratio, chi_square"
+            "Use one of: id3, c45, cart, c5.0, chaid, entropy, gini, gain_ratio, "
+            "chi_square, pig, semantic_similarity, pig_semantic"
         )
     return mapping[algo]
 
@@ -161,7 +166,7 @@ def parse_args() -> argparse.Namespace:
         "--ontology",
         type=str,
         default=None,
-        help="Force ontology for all tuning runs (e.g., dto, chebi, go, bao, mesh)",
+        help="Force ontology for all tuning runs (e.g., dto, chebi, go, bao, mesh, pato, thesaurus, sio, bero, cheminf, oce, dinto, dron)",
     )
     p.add_argument("--max-samples", type=int, default=500)
     p.add_argument("--seed", type=int, default=42)
@@ -191,7 +196,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--algorithm-space",
         nargs="*",
-        default=["cart", "id3", "c45", "c5.0", "chaid"],
+        default=["cart", "id3", "c45", "c5.0", "chaid", "pig", "semantic_similarity", "pig_semantic"],
         help="Candidate algorithms",
     )
     p.add_argument("--n-trees-min", type=int, default=8)
@@ -200,6 +205,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-ants-max", type=int, default=30)
     p.add_argument("--n-gen-min", type=int, default=1)
     p.add_argument("--n-gen-max", type=int, default=4)
+
+    p.add_argument("--pig-alpha", type=float, default=1.0,
+                    help="PIG alpha weight for ATI (default: 1.0)")
+    p.add_argument("--semantic-weight", type=float, default=0.3,
+                    help="Semantic similarity weight [0,1] for pig_semantic criterion (default: 0.3)")
 
     p.add_argument("--jump-base-min", type=float, default=0.85)
     p.add_argument("--jump-base-max", type=float, default=1.0)
@@ -325,6 +335,8 @@ def main() -> None:
                     n_ants_per_tree=n_ants,
                     n_generations=n_gen,
                     criterion=criterion,
+                    pig_alpha=args.pig_alpha,
+                    semantic_weight=args.semantic_weight,
                     jump_penalty_base=jump_base,
                     jump_gamma=jump_gamma,
                     seed=args.seed,

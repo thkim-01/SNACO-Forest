@@ -434,6 +434,8 @@ class ToxicityDataPipeline:
         criterion: Optional[str] = None,
         jump_penalty_base: Optional[float] = None,
         jump_gamma: Optional[float] = None,
+        pig_alpha: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
         seed: Optional[int] = None,
         skip_fit: bool = False,
     ) -> Dict[str, Any]:
@@ -452,11 +454,16 @@ class ToxicityDataPipeline:
         n_trees, n_ants_per_tree, n_generations, seed : int | None
             SemanticForest 파라미터 오버라이드.
         criterion : str | None
-            분할 기준 오버라이드 ("entropy" | "gini" | "gain_ratio" | "chi_square").
+            분할 기준 오버라이드 ("entropy" | "gini" | "gain_ratio" | "chi_square"
+            | "pig" | "semantic_similarity" | "pig_semantic").
         jump_penalty_base : float | None
             계층 건너뛰기 η 감가율 p (0 <= p <= 1). None이면 기본값 사용.
         jump_gamma : float | None
             계층 건너뛰기 페널티 강도 γ. 0이면 페널티 없음.
+        pig_alpha : float | None
+            PIG(Penalized Information Gain)의 ATI 가중치 α. 기본 1.0.
+        semantic_weight : float | None
+            Semantic Similarity 가중치 (0~1). 기본 0.3.
         skip_fit : bool
             True면 그래프 생성까지만 수행 (테스트/디버깅용).
 
@@ -486,11 +493,24 @@ class ToxicityDataPipeline:
             else defaults.get("jump_gamma", 1.0)
         )
 
-        if _criterion not in {"entropy", "gini", "gain_ratio", "chi_square"}:
+        if _criterion not in {"entropy", "gini", "gain_ratio", "chi_square",
+                                  "pig", "semantic_similarity", "pig_semantic"}:
             raise ValueError(
                 f"Unsupported criterion '{_criterion}'. "
-                "Use 'entropy', 'gini', 'gain_ratio', or 'chi_square'."
+                "Use 'entropy', 'gini', 'gain_ratio', 'chi_square', "
+                "'pig', 'semantic_similarity', or 'pig_semantic'."
             )
+
+        _pig_alpha = (
+            pig_alpha
+            if pig_alpha is not None
+            else defaults.get("pig_alpha", 1.0)
+        )
+        _semantic_weight = (
+            semantic_weight
+            if semantic_weight is not None
+            else defaults.get("semantic_weight", 0.3)
+        )
 
         # config에서 max_samples 가져오기
         if max_samples == 0:
@@ -654,6 +674,8 @@ class ToxicityDataPipeline:
             criterion=_criterion,
             jump_penalty_base=_jump_penalty_base,
             jump_gamma=_jump_gamma,
+            pig_alpha=_pig_alpha,
+            semantic_weight=_semantic_weight,
             n_generations=_n_gen,
             seed=_seed,
         )
@@ -784,6 +806,8 @@ class ToxicityDataPipeline:
         criterion: Optional[str] = None,
         jump_penalty_base: Optional[float] = None,
         jump_gamma: Optional[float] = None,
+        pig_alpha: Optional[float] = None,
+        semantic_weight: Optional[float] = None,
         seed: int = 42,
         skip_fit: bool = False,
     ) -> List[Dict[str, Any]]:
@@ -793,7 +817,8 @@ class ToxicityDataPipeline:
         ----------
         datasets : list[str] | None
             실행할 데이터셋 이름 목록 (None = 전체 6개).
-        max_samples, criterion, jump_penalty_base, jump_gamma, seed, skip_fit : 기존과 동일.
+        max_samples, criterion, jump_penalty_base, jump_gamma, pig_alpha,
+        semantic_weight, seed, skip_fit : 기존과 동일.
 
         Returns
         -------
@@ -816,6 +841,8 @@ class ToxicityDataPipeline:
                     criterion=criterion,
                     jump_penalty_base=jump_penalty_base,
                     jump_gamma=jump_gamma,
+                    pig_alpha=pig_alpha,
+                    semantic_weight=semantic_weight,
                     seed=seed,
                     skip_fit=skip_fit,
                 )

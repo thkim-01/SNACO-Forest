@@ -318,6 +318,12 @@ def _info_gain(
     right_labels: np.ndarray,
     criterion: str = "entropy",
     class_weights: Optional[Dict[int, float]] = None,
+    *,
+    graph_scorer=None,
+    feature_node: Optional[str] = None,
+    feature_nodes: Optional[List[str]] = None,
+    pig_alpha: Optional[float] = None,
+    semantic_weight: float = 0.3,
 ) -> float:
     """Class-weight 보정이 적용된 정보 이득.
 
@@ -330,12 +336,57 @@ def _info_gain(
         - ``"gini"`` — 지니 불순도 기반 IG (CART)
         - ``"gain_ratio"`` — Gain Ratio (C5.0)
         - ``"chi_square"`` — 카이제곱 통계량 (CHAID)
+        - ``"pig"`` — Penalized Information Gain (계층 인식 분할)
+        - ``"semantic_similarity"`` — 시맨틱 유사도 기반 분할
+        - ``"pig_semantic"`` — PIG + Semantic Similarity 결합
     """
     # C5.0 / CHAID는 별도 함수로 분기
     if criterion == "gain_ratio":
         return _gain_ratio(parent_labels, left_labels, right_labels, class_weights)
     if criterion == "chi_square":
         return _chi_square(parent_labels, left_labels, right_labels, class_weights)
+
+    # PIG / Semantic Similarity / PIG+Semantic
+    if criterion in ("pig", "semantic_similarity", "pig_semantic"):
+        from src.aco.taxonomy_aware_gain import (
+            pig_gain,
+            semantic_sim_gain,
+            pig_semantic_combined_gain,
+        )
+        _nodes = list(feature_nodes or [])
+        if feature_node and feature_node not in _nodes:
+            _nodes.append(feature_node)
+        if criterion == "pig":
+            return pig_gain(
+                parent_labels, left_labels, right_labels,
+                feature_nodes=_nodes or None,
+                graph_scorer=graph_scorer,
+                base_criterion="entropy",
+                class_weights=class_weights,
+                alpha=pig_alpha,
+            )
+        elif criterion == "semantic_similarity":
+            return semantic_sim_gain(
+                parent_labels, left_labels, right_labels,
+                left_feature_nodes=_nodes or None,
+                right_feature_nodes=_nodes or None,
+                graph_scorer=graph_scorer,
+                base_criterion="entropy",
+                class_weights=class_weights,
+                semantic_weight=semantic_weight,
+            )
+        else:  # pig_semantic
+            return pig_semantic_combined_gain(
+                parent_labels, left_labels, right_labels,
+                feature_nodes=_nodes or None,
+                left_feature_nodes=_nodes or None,
+                right_feature_nodes=_nodes or None,
+                graph_scorer=graph_scorer,
+                base_criterion="entropy",
+                class_weights=class_weights,
+                alpha=pig_alpha,
+                semantic_weight=semantic_weight,
+            )
 
     impurity_fn = _entropy if criterion == "entropy" else _gini
     n = len(parent_labels)
@@ -371,6 +422,11 @@ def find_best_threshold(
     criterion: str = "entropy",
     n_candidates: int = 32,
     class_weights: Optional[Dict[int, float]] = None,
+    *,
+    graph_scorer=None,
+    feature_node: Optional[str] = None,
+    pig_alpha: Optional[float] = None,
+    semantic_weight: float = 0.3,
 ) -> Tuple[float, float, str]:
     """Class-weight 보정이 적용된 최적 분할 임계값 탐색.
 
@@ -381,11 +437,20 @@ def find_best_threshold(
     labels : array-like
         대응하는 라벨 벡터.
     criterion : str
-        ``"entropy"`` | ``"gini"`` | ``"gain_ratio"`` | ``"chi_square"``.
+        ``"entropy"`` | ``"gini"`` | ``"gain_ratio"`` | ``"chi_square"``
+        | ``"pig"`` | ``"semantic_similarity"`` | ``"pig_semantic"``.
     n_candidates : int
         후보 임계값 수 (분위수 기반 샘플링).
     class_weights : dict[int, float] | None
         클래스별 가중치. None이면 균등 가중치.
+    graph_scorer : GraphTaxonomyScorer | None
+        PIG/Semantic Similarity 계산기. pig/semantic 기준 사용 시 필요.
+    feature_node : str | None
+        분할에 사용된 feature 노드 ID (PIG ATI 계산용).
+    pig_alpha : float | None
+        PIG α 하이퍼파라미터.
+    semantic_weight : float
+        Semantic Similarity 가중치.
 
     Returns
     -------
@@ -410,7 +475,11 @@ def find_best_threshold(
         if left_mask.sum() == 0 or right_mask.sum() == 0:
             continue
         ig = _info_gain(
-            lb, lb[left_mask], lb[right_mask], criterion, class_weights
+            lb, lb[left_mask], lb[right_mask], criterion, class_weights,
+            graph_scorer=graph_scorer,
+            feature_node=feature_node,
+            pig_alpha=pig_alpha,
+            semantic_weight=semantic_weight,
         )
         if ig > best_ig:
             best_ig = ig
@@ -450,7 +519,8 @@ class RuleExtractionEngine:
     min_samples_leaf : int
         분할 후 리프에 남아야 하는 최소 샘플 수. 기본 5.
     criterion : str
-        분할 기준. ``"entropy"`` | ``"gini"``. 기본 ``"entropy"``.
+        분할 기준. ``"entropy"`` | ``"gini"`` | ``"pig"`` | ``"semantic_similarity"`` | ``"pig_semantic"``.
+        기본 ``"entropy"``.
     jump_penalty_base : float
         계층 건너뛰기 감가율 기본값 (0 <= p <= 1).
         예: 0.9면 건너뛰기 시 η에 0.9 배율 적용.
@@ -458,6 +528,10 @@ class RuleExtractionEngine:
         계층 건너뛰기 페널티 강도 γ.
         γ=0 이면 페널티 없음, γ가 커질수록 건너뛰기 억제,
         γ=∞ 이면 건너뛰기 확률이 0에 수렴.
+    pig_alpha : float
+        PIG의 ATI 가중치 α. 기본 1.0.
+    semantic_weight : float
+        Semantic Similarity 가중치 (0~1). 기본 0.3.
     seed : int | None
         재현성 시드.
 
@@ -483,6 +557,8 @@ class RuleExtractionEngine:
         criterion: str = "entropy",
         jump_penalty_base: float = 0.9,
         jump_gamma: float = 1.0,
+        pig_alpha: float = 1.0,
+        semantic_weight: float = 0.3,
         seed: Optional[int] = None,
         class_weights: Optional[Dict[int, float]] = None,
     ) -> None:
@@ -498,6 +574,18 @@ class RuleExtractionEngine:
         self.min_gain = min_gain
         self.min_samples_leaf = min_samples_leaf
         self.criterion = criterion
+        self.pig_alpha = float(pig_alpha)
+        self.semantic_weight = float(semantic_weight)
+        # GraphTaxonomyScorer: PIG/SemanticSim 사용 시 계층 정보 제공
+        self._graph_scorer = None
+        if criterion in ("pig", "semantic_similarity", "pig_semantic"):
+            try:
+                from src.sdt.taxonomy_scorer import GraphTaxonomyScorer
+                self._graph_scorer = GraphTaxonomyScorer(
+                    graph, alpha=self.pig_alpha
+                )
+            except Exception as e:
+                logger.warning("GraphTaxonomyScorer init failed: %s. Falling back to entropy.", e)
         if not (0.0 <= jump_penalty_base <= 1.0):
             raise ValueError(
                 f"jump_penalty_base must be in [0, 1], got {jump_penalty_base}"
@@ -637,6 +725,10 @@ class RuleExtractionEngine:
                 threshold, ig, operator = find_best_threshold(
                     active_fv, active_lb, self.criterion,
                     class_weights=self.class_weights,
+                    graph_scorer=self._graph_scorer,
+                    feature_node=current,
+                    pig_alpha=self.pig_alpha,
+                    semantic_weight=self.semantic_weight,
                 )
 
                 # ── 정보 이득 하한 체크 (조기 종료) ──
@@ -1010,6 +1102,10 @@ class RuleExtractionEngine:
         _, ig, _ = find_best_threshold(
             fv, lb, self.criterion, n_candidates=16,
             class_weights=self.class_weights,
+            graph_scorer=self._graph_scorer,
+            feature_node=node_id,
+            pig_alpha=self.pig_alpha,
+            semantic_weight=self.semantic_weight,
         )
 
         # η = base + IG 스케일링 (IG는 보통 0~1)

@@ -53,6 +53,10 @@ def resolve_algorithm(algorithm: str) -> str:
         "c5.0": "gain_ratio",
         "c50": "gain_ratio",
         "chaid": "chi_square",
+        "pig": "pig",
+        "semantic_similarity": "semantic_similarity",
+        "semantic_sim": "semantic_similarity",
+        "pig_semantic": "pig_semantic",
         "entropy": "entropy",
         "gini": "gini",
         "gain_ratio": "gain_ratio",
@@ -61,7 +65,7 @@ def resolve_algorithm(algorithm: str) -> str:
     if algo not in mapping:
         raise ValueError(
             f"Unsupported algorithm '{algorithm}'. "
-            "Use one of: id3, c45, cart, c5.0, chaid, entropy, gini"
+            "Use one of: id3, c45, cart, c5.0, chaid, pig, semantic_similarity, pig_semantic, entropy, gini"
         )
     return mapping[algo]
 
@@ -165,7 +169,7 @@ def parse_args():
         "--ontology",
         type=str,
         default=None,
-        help="Force ontology for all runs (e.g., dto, chebi, go, bao, mesh)",
+        help="Force ontology for all runs (e.g., dto, chebi, go, bao, mesh, pato, thesaurus, sio, bero, cheminf, oce, dinto, dron)",
     )
     p.add_argument(
         "--max-samples",
@@ -201,7 +205,7 @@ def parse_args():
         "--algorithm",
         type=str,
         default="id3",
-        help="Split algorithm profile: id3 | c45 | cart | c5.0 | chaid | entropy | gini",
+        help="Split algorithm profile: id3 | c45 | cart | c5.0 | chaid | pig | semantic_similarity | pig_semantic | entropy | gini",
     )
     p.add_argument(
         "--jump-penalty-base",
@@ -214,6 +218,19 @@ def parse_args():
         type=float,
         default=0.0,
         help="Hierarchy jump penalty strength gamma (default: 0.0, no penalty)",
+    )
+    p.add_argument(
+        "--pig-alpha",
+        type=float,
+        default=1.0,
+        help="PIG: ATI weight alpha (default: 1.0). Only effective with pig/pig_semantic criterion.",
+    )
+    p.add_argument(
+        "--semantic-weight",
+        type=float,
+        default=0.3,
+        help="Semantic Similarity weight in [0,1] (default: 0.3). "
+             "Only effective with semantic_similarity/pig_semantic criterion.",
     )
     p.add_argument(
         "--overwrite",
@@ -265,6 +282,8 @@ def run_benchmark(args):
     log(f"  Algorithm : {args.algorithm}")
     log(f"  JumpBase  : {args.jump_penalty_base}")
     log(f"  JumpGamma : {args.jump_gamma}")
+    log(f"  PIG Alpha : {args.pig_alpha}")
+    log(f"  SemWeight : {args.semantic_weight}")
     log(f"  Overwrite : {args.overwrite}")
     log(f"  Output    : {OUTPUT_DIR}")
     log("=" * 70)
@@ -339,6 +358,8 @@ def run_benchmark(args):
                 criterion=criterion,
                 jump_penalty_base=args.jump_penalty_base,
                 jump_gamma=args.jump_gamma,
+                pig_alpha=args.pig_alpha,
+                semantic_weight=args.semantic_weight,
                 seed=args.seed,
             )
             elapsed = time.time() - t0
