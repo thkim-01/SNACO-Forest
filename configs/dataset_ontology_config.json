@@ -432,6 +432,46 @@
       "extract_subgraph": true,
       "root_classes": [],
       "comment": "optional ontology override"
+    },
+    "ogco": {
+      "file": "ontology/ogco.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Ontology of Glyco-Conjugates (OGCO)",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "chmo": {
+      "file": "ontology/chmo.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Chemical Methods Ontology (CHMO)",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "chem2bio2rdf": {
+      "file": "ontology/chem2bio2rdf.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "Chem2Bio2RDF Ontology",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
+    },
+    "ontotox": {
+      "file": "ontology/OntoTox.owl",
+      "format": "xml",
+      "size_class": "large",
+      "description": "OntoTox Toxicology Ontology",
+      "max_triples": 300000,
+      "extract_subgraph": true,
+      "root_classes": [],
+      "comment": "optional ontology override"
     }
   },
   "defaults": {

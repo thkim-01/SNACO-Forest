@@ -1,6 +1,6 @@
 Semantic-Forest-lab
 
-SMILES 기반 분자 구조를 **데이터셋별 도메인 온톨로지(ChEBI/DTO/BAO/GO/MeSH, optional: PATO/Thesaurus/SIO/BERO/CHEMINF/OCE/DINTO/DRON)** 로 변환한 뒤,
+SMILES 기반 분자 구조를 **데이터셋별 도메인 온톨로지(ChEBI/DTO/BAO/GO/MeSH, optional: PATO/Thesaurus/SIO/BERO/CHEMINF/OCE/DINTO/DRON/OGCO/CHMO/Chem2Bio2RDF/OntoTox)** 로 변환한 뒤,
 설명가능한 결정트리를 **개미군집 최적화(ACO) 기반 배깅(bootstrap aggregating)** 으로 학습해 분류 성능을 높이는 실험 레포입니다.
 
 이 레포는 알고리즘별 버전을 **하나의 프로젝트 안에서** 관리합니다:
@@ -48,13 +48,14 @@ pip install -r requirements.txt
 - Ontology 다운로드: https://drive.google.com/drive/folders/1-Ff2iOEhcAB4VRGPaHCdSWSEHFrM4T8X?usp=drive_link
 - Dataset 다운로드: https://drive.google.com/drive/folders/1Aw2UvH8cCp43BiHUGRidCcudNb30pMkw?usp=drive_link
 
-> 2026-03 업데이트: 신규 온톨로지 파일 `sio.owl`, `bero.owl`, `cheminf.owl`, `oce-merged.owl`, `dinto_1.3.owl`, `dron.owl` 도 위 Ontology 링크에 포함되어 있습니다.
+> 2026-03 업데이트: 신규 온톨로지 파일 `sio.owl`, `bero.owl`, `cheminf.owl`, `oce-merged.owl`, `dinto_1.3.owl`, `dron.owl`, `ogco.owl`, `chmo.owl`, `chem2bio2rdf.owl`, `OntoTox.owl` 도 위 Ontology 링크에 포함되어 있습니다.
 
 Ontology 폴더에는 최소 다음 파일이 포함되어야 합니다.
 
 - `chebi.owl`, `go.owl`, `mesh.owl`, `bao_complete.owl`, `DTO.xrdf`
 - `pato.owl`, `Thesaurus.owl` (요청하신 Theasaurus 파일은 `Thesaurus.owl` 표기)
 - `sio.owl`, `bero.owl`, `cheminf.owl`, `oce-merged.owl`, `dinto_1.3.owl`, `dron.owl`
+- `ogco.owl`, `chmo.owl`, `chem2bio2rdf.owl`, `OntoTox.owl`
 
 다운로드 후 프로젝트 루트에 아래 구조로 배치하세요.
 

@@ -169,7 +169,7 @@ def parse_args():
         "--ontology",
         type=str,
         default=None,
-        help="Force ontology for all runs (e.g., dto, chebi, go, bao, mesh, pato, thesaurus, sio, bero, cheminf, oce, dinto, dron)",
+        help="Force ontology for all runs (e.g., dto, chebi, go, bao, mesh, pato, thesaurus, sio, bero, cheminf, oce, dinto, dron, ogco, chmo, chem2bio2rdf, ontotox)",
     )
     p.add_argument(
         "--max-samples",

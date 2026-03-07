@@ -166,7 +166,7 @@ def parse_args() -> argparse.Namespace:
         "--ontology",
         type=str,
         default=None,
-        help="Force ontology for all tuning runs (e.g., dto, chebi, go, bao, mesh, pato, thesaurus, sio, bero, cheminf, oce, dinto, dron)",
+        help="Force ontology for all tuning runs (e.g., dto, chebi, go, bao, mesh, pato, thesaurus, sio, bero, cheminf, oce, dinto, dron, ogco, chmo, chem2bio2rdf, ontotox)",
     )
     p.add_argument("--max-samples", type=int, default=500)
     p.add_argument("--seed", type=int, default=42)
