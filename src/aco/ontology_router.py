@@ -401,7 +401,7 @@ class OntologyRouter:
                     G.add_edge(rc_id, root, predicate="subClassOf", pheromone=1.0)
 
         logger.info(
-            "  Placeholder \'{}\'  : %d nodes, %d edges",
+            "  Placeholder '%s'  : %d nodes, %d edges",
             name, G.number_of_nodes(), G.number_of_edges(),
         )
         return G
