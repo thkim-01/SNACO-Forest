@@ -436,6 +436,8 @@ class ToxicityDataPipeline:
         jump_gamma: Optional[float] = None,
         pig_alpha: Optional[float] = None,
         semantic_weight: Optional[float] = None,
+        compute_backend: Optional[str] = None,
+        torch_device: Optional[str] = None,
         seed: Optional[int] = None,
         skip_fit: bool = False,
     ) -> Dict[str, Any]:
@@ -464,6 +466,10 @@ class ToxicityDataPipeline:
             PIG(Penalized Information Gain)의 ATI 가중치 α. 기본 1.0.
         semantic_weight : float | None
             Semantic Similarity 가중치 (0~1). 기본 0.3.
+        compute_backend : str | None
+            계산 백엔드 선택("auto" | "numpy" | "torch").
+        torch_device : str | None
+            Torch 장치 선택("auto", "cpu", "cuda" 등).
         skip_fit : bool
             True면 그래프 생성까지만 수행 (테스트/디버깅용).
 
@@ -510,6 +516,16 @@ class ToxicityDataPipeline:
             semantic_weight
             if semantic_weight is not None
             else defaults.get("semantic_weight", 0.3)
+        )
+        _compute_backend = (
+            compute_backend
+            if compute_backend is not None
+            else defaults.get("compute_backend", "auto")
+        )
+        _torch_device = (
+            torch_device
+            if torch_device is not None
+            else defaults.get("torch_device", "auto")
         )
 
         # config에서 max_samples 가져오기
@@ -647,6 +663,8 @@ class ToxicityDataPipeline:
             "criterion": _criterion,
             "jump_penalty_base": _jump_penalty_base,
             "jump_gamma": _jump_gamma,
+            "compute_backend": _compute_backend,
+            "torch_device": _torch_device,
         }
 
         if skip_fit:
@@ -676,6 +694,8 @@ class ToxicityDataPipeline:
             jump_gamma=_jump_gamma,
             pig_alpha=_pig_alpha,
             semantic_weight=_semantic_weight,
+            compute_backend=_compute_backend,
+            torch_device=_torch_device,
             n_generations=_n_gen,
             seed=_seed,
         )

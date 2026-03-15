@@ -8,8 +8,8 @@
       "task": "classification",
       "description": "Blood-Brain Barrier Penetration",
       "n_classes": 2,
-      "ontology": "chebi",
-      "bridge_domain": "chebi",
+      "ontology": "bao",
+      "bridge_domain": "anchor",
       "heuristic_profile": "physicochemical_prior",
       "prior_bounds": {
         "tpsa": {
@@ -36,8 +36,8 @@
       "task": "classification",
       "description": "Beta-secretase 1 (BACE-1) Inhibitor",
       "n_classes": 2,
-      "ontology": "dto",
-      "bridge_domain": "anchor",
+      "ontology": "chebi",
+      "bridge_domain": "chebi",
       "heuristic_profile": "binding_pocket",
       "extra_feature_cols": [
         "MW",
@@ -88,9 +88,12 @@
       "task": "classification",
       "description": "Clinical Toxicity",
       "n_classes": 2,
-      "all_targets": ["CT_TOX", "FDA_APPROVED"],
-      "ontology": "chebi",
-      "bridge_domain": "chebi",
+      "all_targets": [
+        "CT_TOX",
+        "FDA_APPROVED"
+      ],
+      "ontology": "bao",
+      "bridge_domain": "anchor",
       "heuristic_profile": "fda_cramer_static",
       "static_pheromone": {
         "fda_edt_questions": [
@@ -158,11 +161,11 @@
       "task": "classification",
       "description": "HIV replication inhibition",
       "n_classes": 2,
-      "ontology": "bao",
+      "ontology": "thesaurus",
       "bridge_domain": "anchor",
       "heuristic_profile": "hierarchical_go",
       "hierarchy_config": {
-        "source_ontology": "bao",
+        "source_ontology": "thesaurus",
         "gate_levels": [
           {
             "depth": 0,
@@ -206,11 +209,11 @@
         "SR-MMP",
         "SR-p53"
       ],
-      "ontology": "go",
+      "ontology": "chmo",
       "bridge_domain": "anchor",
       "heuristic_profile": "hierarchical_aop",
       "hierarchy_config": {
-        "source_ontology": "go",
+        "source_ontology": "chmo",
         "gate_levels": [
           {
             "depth": 0,
@@ -268,11 +271,11 @@
         "Nervous system disorders",
         "Injury, poisoning and procedural complications"
       ],
-      "ontology": "mesh",
+      "ontology": "chem2bio2rdf",
       "bridge_domain": "anchor",
       "heuristic_profile": "hierarchical_meddra",
       "hierarchy_config": {
-        "source_ontology": "mesh",
+        "source_ontology": "chem2bio2rdf",
         "gate_levels": [
           {
             "depth": 0,

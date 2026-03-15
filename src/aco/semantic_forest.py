@@ -185,6 +185,8 @@ class SemanticForest:
         jump_gamma: float = 1.0,
         pig_alpha: float = 1.0,
         semantic_weight: float = 0.3,
+        compute_backend: str = "auto",
+        torch_device: str = "auto",
         n_generations: int = 3,
         seed: Optional[int] = None,
     ) -> None:
@@ -207,6 +209,8 @@ class SemanticForest:
         self.jump_gamma = jump_gamma
         self.pig_alpha = pig_alpha
         self.semantic_weight = semantic_weight
+        self.compute_backend = compute_backend
+        self.torch_device = torch_device
         self.n_generations = n_generations
         self.seed = seed
 
@@ -231,6 +235,13 @@ class SemanticForest:
             evaporation_rate,
             n_generations,
         )
+        if str(self.compute_backend).lower() != "auto" or str(self.torch_device).lower() != "auto":
+            logger.info(
+                "Backend options received: compute_backend=%s, torch_device=%s "
+                "(current ACO path uses numpy execution)",
+                self.compute_backend,
+                self.torch_device,
+            )
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 공개 API

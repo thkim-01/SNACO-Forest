@@ -30,6 +30,7 @@ import traceback
 import csv
 import logging
 import shutil
+import inspect
 from pathlib import Path
 
 # ── 환경 설정 ──
@@ -233,6 +234,25 @@ def parse_args():
              "Only effective with semantic_similarity/pig_semantic criterion.",
     )
     p.add_argument(
+        "--compute-backend",
+        type=str,
+        default="auto",
+        choices=["auto", "numpy", "torch"],
+        help=(
+            "Compute backend option forwarded to pipeline/factory "
+            "(current ACO execution path remains numpy-based)."
+        ),
+    )
+    p.add_argument(
+        "--torch-device",
+        type=str,
+        default="auto",
+        help=(
+            "Torch device option forwarded to pipeline/factory "
+            "(effective when torch backend path is implemented)."
+        ),
+    )
+    p.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing per-task JSON files (default: skip existing)",
@@ -284,9 +304,17 @@ def run_benchmark(args):
     log(f"  JumpGamma : {args.jump_gamma}")
     log(f"  PIG Alpha : {args.pig_alpha}")
     log(f"  SemWeight : {args.semantic_weight}")
+    log(f"  Backend   : {args.compute_backend}")
+    log(f"  Device    : {args.torch_device}")
     log(f"  Overwrite : {args.overwrite}")
     log(f"  Output    : {OUTPUT_DIR}")
     log("=" * 70)
+
+    if args.compute_backend != "auto" or args.torch_device != "auto":
+        log(
+            "  NOTE      : backend options are forwarded; current ACO learner "
+            "still executes with numpy internals."
+        )
 
     criterion = resolve_algorithm(args.algorithm)
     if args.algorithm.lower() == "c45":
@@ -347,21 +375,28 @@ def run_benchmark(args):
                 continue
 
             t0 = time.time()
-            result = pipeline.run(
-                ds_name,
-                target=target,
-                ontology_override=args.ontology,
-                max_samples=args.max_samples,
-                n_trees=args.n_trees,
-                n_ants_per_tree=args.n_ants_per_tree,
-                n_generations=args.n_generations,
-                criterion=criterion,
-                jump_penalty_base=args.jump_penalty_base,
-                jump_gamma=args.jump_gamma,
-                pig_alpha=args.pig_alpha,
-                semantic_weight=args.semantic_weight,
-                seed=args.seed,
-            )
+            run_kwargs = {
+                "target": target,
+                "ontology_override": args.ontology,
+                "max_samples": args.max_samples,
+                "n_trees": args.n_trees,
+                "n_ants_per_tree": args.n_ants_per_tree,
+                "n_generations": args.n_generations,
+                "criterion": criterion,
+                "jump_penalty_base": args.jump_penalty_base,
+                "jump_gamma": args.jump_gamma,
+                "pig_alpha": args.pig_alpha,
+                "semantic_weight": args.semantic_weight,
+                "seed": args.seed,
+            }
+
+            run_params = inspect.signature(pipeline.run).parameters
+            if "compute_backend" in run_params:
+                run_kwargs["compute_backend"] = args.compute_backend
+            if "torch_device" in run_params:
+                run_kwargs["torch_device"] = args.torch_device
+
+            result = pipeline.run(ds_name, **run_kwargs)
             elapsed = time.time() - t0
 
             # ── Interpret top rules ──
