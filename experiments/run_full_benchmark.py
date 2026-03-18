@@ -43,6 +43,9 @@ os.chdir(str(PROJECT_ROOT))
 
 import numpy as np
 
+from src.utils.rule_io import RuleExporter
+from src.utils.rule_comparator import RuleComparator
+
 
 def resolve_algorithm(algorithm: str) -> str:
     """Map algorithm profile name to SemanticForest criterion."""
@@ -268,6 +271,25 @@ def parse_args():
         default=5,
         help="Number of top rules to extract (default: 5)",
     )
+    p.add_argument(
+        "--export-rules-dir",
+        type=str,
+        default="output/benchmark_rules",
+        help="Directory to export best rules per task. Set to empty string to disable.",
+    )
+    p.add_argument(
+        "--export-format",
+        type=str,
+        default="json",
+        choices=["json", "csv", "md", "markdown", "txt"],
+        help="Format for exported rules (default: json)",
+    )
+    p.add_argument(
+        "--fixed-rules-dir",
+        type=str,
+        default=None,
+        help="Directory containing fixed rules (JSON). If a file <dataset>_<target>.json is found, it will be injected.",
+    )
     return p.parse_args()
 
 
@@ -374,6 +396,16 @@ def run_benchmark(args):
                 successes += 1
                 continue
 
+            loaded_fixed_rules = None
+            if args.fixed_rules_dir:
+                fixed_path = Path(args.fixed_rules_dir) / f"{ds_name}_{safe_target}.json"
+                if fixed_path.exists():
+                    try:
+                        loaded_fixed_rules = RuleExporter.load_fixed_rules(str(fixed_path))
+                        log(f"  Loaded {len(loaded_fixed_rules)} fixed rules from {fixed_path.name}")
+                    except Exception as e:
+                        log(f"  Warning: Failed to load fixed rules from {fixed_path}: {e}")
+
             t0 = time.time()
             run_kwargs = {
                 "target": target,
@@ -388,6 +420,7 @@ def run_benchmark(args):
                 "pig_alpha": args.pig_alpha,
                 "semantic_weight": args.semantic_weight,
                 "seed": args.seed,
+                "fixed_rules": loaded_fixed_rules,
             }
 
             run_params = inspect.signature(pipeline.run).parameters
@@ -398,6 +431,38 @@ def run_benchmark(args):
 
             result = pipeline.run(ds_name, **run_kwargs)
             elapsed = time.time() - t0
+
+            forest = result.pop("trained_forest", None)
+            test_df = result.pop("test_df", None)
+            test_labels = result.pop("test_labels", None)
+
+            # ── Export rules & Compare ──
+            if args.export_rules_dir and forest is not None and result.get("status") == "complete":
+                export_dir = Path(args.export_rules_dir)
+                export_dir.mkdir(parents=True, exist_ok=True)
+                fmt = args.export_format.lower()
+                ext = "md" if fmt == "markdown" else fmt
+                export_path = export_dir / f"{ds_name}_{safe_target}.{ext}"
+                
+                try:
+                    forest.export_rules(str(export_path), format=fmt, top_k=args.top_k)
+                    log(f"  Exported top {args.top_k} rules to {export_path.name}")
+                    
+                    if loaded_fixed_rules is not None and test_df is not None and test_labels is not None:
+                        import pandas as pd
+                        report = RuleComparator.generate_comparison_report(
+                            auto_rules=forest.all_rules_,
+                            fixed_rules=loaded_fixed_rules,
+                            feature_df=pd.DataFrame(test_df),
+                            labels=pd.Series(test_labels),
+                            task=result.get("task", "classification")
+                        )
+                        report_path = export_dir / f"{ds_name}_{safe_target}_comparison.md"
+                        with open(report_path, "w", encoding="utf-8") as rf:
+                            rf.write(report)
+                        log(f"  Generated comparison report at {report_path.name}")
+                except Exception as e:
+                    log(f"  Warning: Rule export/comparison failed: {e}")
 
             # ── Interpret top rules ──
             top_rules = []
@@ -418,6 +483,7 @@ def run_benchmark(args):
 
             # ── Log metrics ──
             log(f"  Status     : {result.get('status', 'unknown')}")
+            log(f"  Task       : {result.get('task', 'classification')}")
             log(f"  Samples    : {result.get('n_samples', '?')}")
             log(f"  Train/Test : {result.get('n_train', '?')}/{result.get('n_test', '?')}")
             log(f"  Features   : {result.get('n_features', '?')}")
@@ -425,17 +491,25 @@ def run_benchmark(args):
             log(f"  Rules      : {result.get('n_rules', '?')}")
             log(f"  Fit time   : {result.get('fit_time_sec', 0):.1f}s")
 
-            auc = result.get("test_auc_roc", -1)
-            f1 = result.get("test_f1_majority", 0)
-            bal_acc = result.get("test_balanced_accuracy_majority", 0)
-            prec = result.get("test_precision_majority", 0)
-            rec = result.get("test_recall_majority", 0)
+            if result.get('task') == 'regression':
+                mae = result.get('test_mae', -1)
+                rmse = result.get('test_rmse', -1)
+                r2 = result.get('test_r2', -1)
+                log(f"  MAE        : {mae:.4f}")
+                log(f"  RMSE       : {rmse:.4f}")
+                log(f"  R\u00b2         : {r2:.4f}")
+            else:
+                auc = result.get("test_auc_roc", -1)
+                f1 = result.get("test_f1_majority", 0)
+                bal_acc = result.get("test_balanced_accuracy_majority", 0)
+                prec = result.get("test_precision_majority", 0)
+                rec = result.get("test_recall_majority", 0)
 
-            log(f"  AUC-ROC    : {auc:.4f}")
-            log(f"  F1         : {f1:.4f}")
-            log(f"  BalAcc     : {bal_acc:.4f}")
-            log(f"  Precision  : {prec:.4f}")
-            log(f"  Recall     : {rec:.4f}")
+                log(f"  AUC-ROC    : {auc:.4f}")
+                log(f"  F1         : {f1:.4f}")
+                log(f"  BalAcc     : {bal_acc:.4f}")
+                log(f"  Precision  : {prec:.4f}")
+                log(f"  Recall     : {rec:.4f}")
             log(f"  Pheromone  : {result.get('pheromone_sparsity_pct', 0):.2f}% active")
             log(f"  Total time : {elapsed:.1f}s")
 
@@ -474,40 +548,79 @@ def run_benchmark(args):
     log("")
 
     # ── Summary table ──
-    header = f"{'Dataset':12s} {'Target':35s} {'AUC-ROC':>8s} {'F1':>8s} {'BalAcc':>8s} {'Prec':>8s} {'Rec':>8s} {'Time':>7s} {'Status':>8s}"
-    sep = "-" * len(header)
-    log(header)
-    log(sep)
+    # Classification header
+    cls_header = f"{'Dataset':12s} {'Target':35s} {'AUC-ROC':>8s} {'F1':>8s} {'BalAcc':>8s} {'Prec':>8s} {'Rec':>8s} {'Time':>7s} {'Status':>8s}"
+    reg_header = f"{'Dataset':12s} {'Target':35s} {'MAE':>10s} {'RMSE':>10s} {'R\u00b2':>8s} {'Time':>7s} {'Status':>8s}"
+    cls_sep = "-" * len(cls_header)
+    reg_sep = "-" * len(reg_header)
 
-    for r in all_results:
-        ds = r.get("dataset", "?")
-        tgt = r.get("target", "?")
-        status = r.get("status", "?")
-        if status == "complete":
-            auc = r.get("test_auc_roc", -1)
-            f1 = r.get("test_f1_majority", 0)
-            ba = r.get("test_balanced_accuracy_majority", 0)
-            pr = r.get("test_precision_majority", 0)
-            rc = r.get("test_recall_majority", 0)
-            tm = r.get("total_time_sec", 0)
-            log(f"{ds:12s} {tgt:35s} {auc:8.4f} {f1:8.4f} {ba:8.4f} {pr:8.4f} {rc:8.4f} {tm:6.1f}s {'OK':>8s}")
-        else:
-            err = r.get("error", "unknown")[:30]
-            log(f"{ds:12s} {tgt:35s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>7s} {'FAIL':>8s}")
+    cls_results = [r for r in all_results if r.get('task', 'classification') == 'classification']
+    reg_results = [r for r in all_results if r.get('task') == 'regression']
 
-    log(sep)
+    if cls_results:
+        log("\n  === Classification Results ===")
+        log(cls_header)
+        log(cls_sep)
+        for r in cls_results:
+            ds = r.get("dataset", "?")
+            tgt = r.get("target", "?")
+            status = r.get("status", "?")
+            if status == "complete":
+                auc = r.get("test_auc_roc", -1)
+                f1 = r.get("test_f1_majority", 0)
+                ba = r.get("test_balanced_accuracy_majority", 0)
+                pr = r.get("test_precision_majority", 0)
+                rc = r.get("test_recall_majority", 0)
+                tm = r.get("total_time_sec", 0)
+                log(f"{ds:12s} {tgt:35s} {auc:8.4f} {f1:8.4f} {ba:8.4f} {pr:8.4f} {rc:8.4f} {tm:6.1f}s {'OK':>8s}")
+            else:
+                log(f"{ds:12s} {tgt:35s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>7s} {'FAIL':>8s}")
+        log(cls_sep)
+
+    if reg_results:
+        log("\n  === Regression Results ===")
+        log(reg_header)
+        log(reg_sep)
+        for r in reg_results:
+            ds = r.get("dataset", "?")
+            tgt = r.get("target", "?")
+            status = r.get("status", "?")
+            if status == "complete":
+                mae = r.get("test_mae", -1)
+                rmse = r.get("test_rmse", -1)
+                r2 = r.get("test_r2", -1)
+                tm = r.get("total_time_sec", 0)
+                log(f"{ds:12s} {tgt:35s} {mae:10.4f} {rmse:10.4f} {r2:8.4f} {tm:6.1f}s {'OK':>8s}")
+            else:
+                log(f"{ds:12s} {tgt:35s} {'---':>10s} {'---':>10s} {'---':>8s} {'---':>7s} {'FAIL':>8s}")
+        log(reg_sep)
 
     # ── Aggregate metrics (successful only) ──
     completed = [r for r in all_results if r.get("status") == "complete"]
-    if completed:
-        aucs = [r["test_auc_roc"] for r in completed if r.get("test_auc_roc", -1) > 0]
-        f1s = [r["test_f1_majority"] for r in completed]
-        bas = [r["test_balanced_accuracy_majority"] for r in completed]
+    cls_completed = [r for r in completed if r.get('task', 'classification') == 'classification']
+    reg_completed = [r for r in completed if r.get('task') == 'regression']
+
+    if cls_completed:
+        aucs = [r["test_auc_roc"] for r in cls_completed if r.get("test_auc_roc", -1) > 0]
+        f1s = [r["test_f1_majority"] for r in cls_completed]
+        bas = [r["test_balanced_accuracy_majority"] for r in cls_completed]
 
         log("")
+        log(f"  Classification Aggregate ({len(cls_completed)} tasks):")
         log(f"  Mean AUC-ROC   : {np.mean(aucs):.4f} (std={np.std(aucs):.4f}, n={len(aucs)})")
         log(f"  Mean F1        : {np.mean(f1s):.4f} (std={np.std(f1s):.4f})")
         log(f"  Mean BalAcc    : {np.mean(bas):.4f} (std={np.std(bas):.4f})")
+
+    if reg_completed:
+        maes = [r["test_mae"] for r in reg_completed]
+        rmses = [r["test_rmse"] for r in reg_completed]
+        r2s = [r["test_r2"] for r in reg_completed]
+
+        log("")
+        log(f"  Regression Aggregate ({len(reg_completed)} tasks):")
+        log(f"  Mean MAE       : {np.mean(maes):.4f} (std={np.std(maes):.4f})")
+        log(f"  Mean RMSE      : {np.mean(rmses):.4f} (std={np.std(rmses):.4f})")
+        log(f"  Mean R\u00b2        : {np.mean(r2s):.4f} (std={np.std(r2s):.4f})")
 
     # ── Save aggregate JSON ──
     agg_path = paths["aggregate"]
@@ -532,13 +645,16 @@ def run_benchmark(args):
     # ── Save summary CSV ──
     csv_path = paths["summary"]
     csv_fields = [
-        "dataset", "test_auc_roc", "target", "status",
+        "dataset", "target", "task", "status",
         "n_samples", "n_train", "n_test", "n_features",
         "n_trees", "n_rules", "fit_time_sec", "total_time_sec",
+        "test_auc_roc",
         "test_f1_majority", "test_balanced_accuracy_majority",
         "test_precision_majority", "test_recall_majority",
         "test_accuracy_majority", "test_f1_weighted",
         "train_accuracy", "train_f1",
+        "test_mae", "test_rmse", "test_r2",
+        "train_mae", "train_rmse", "train_r2",
         "pheromone_sparsity_pct",
     ]
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:

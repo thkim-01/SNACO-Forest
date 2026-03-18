@@ -21,6 +21,7 @@ SMILES 기반 분자 구조를 **데이터셋별 도메인 온톨로지(ChEBI/DT
 - **온톨로지 기반**: 데이터셋별 도메인 온톨로지를 사용하는 의미론적 결정트리
 - **ACO + Bagging**: 개미군집 최적화(ACO)로 규칙/경로 탐색 후 배깅 앙상블 구성
 - **설명 가능성**: 의사결정 과정을 명확하게 추적 가능
+- **Rule Analysis**: 규칙 추출, 커스텀 규칙 고정 주입(Fixed Rules), Rule 성능 비교 리포트 제공
 
 단일 트리로 학습하는 버전은 별도 레포로 분리했습니다:
 
@@ -148,6 +149,24 @@ python experiments/verify_semantic_forest_multi.py --search-strategy aco
 # 알고리즘 런처에서 특정 데이터셋만 실행
 python experiments/run_semantic_forest_lab.py --algorithm c45 --datasets bbbp,clintox
 ```
+
+### 4. 규칙(Rule) 분석 및 고정 기능 활용
+
+데이터셋에서 모델이 추출한 강력한 규칙들을 파일로 엑스포트하고, 유의미한 규칙을 Seed로 고정(Fix) 및 주입하여 다음 실험의 성능 및 설명 가능성을 한층 높일 수 있습니다.
+
+```bash
+# 기본 벤치마크 실행 시 각 태스크마다 상위 5개의 규칙이 output/benchmark_rules/ 폴더에 자동 추출됩니다.
+python experiments/run_full_benchmark.py
+
+# 파라미터로 추출 갯수와 포맷(json, csv, md 등)을 변경할 수 있습니다.
+python experiments/run_full_benchmark.py --export-format csv --top-k 10
+
+# 추출된 특정 JSON 규칙 파일(예: bbbp_p_np.json)을 별도의 폴더(예: my_fixed_rules/)에 복사/수정한 뒤 이를 고정 Seed로 주입하여 벤치마크를 재실행합니다.
+python experiments/run_full_benchmark.py --fixed-rules-dir output/my_fixed_rules/
+```
+
+> **규칙 비교 리포트 기능**: `--fixed-rules-dir` 옵션을 사용하여 고정 규칙을 주입하고 실험이 실행된 경우, 해당 데이터셋의 `--export-rules-dir`(기본 `output/benchmark_rules/`) 쪽에 `_comparison.md` 파일명으로 마크다운 표 리포트가 자동 생성됩니다. 
+이를 통해 규칙 고정/주입에 따른 학습 성능(AUC, F1, Accuracy, MAE 등)의 증감 차이를 명확하게 모니터링할 수 있습니다.
 
 ## 버전 구조
 

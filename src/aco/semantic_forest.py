@@ -34,6 +34,7 @@ from .rule_extraction import (
     _majority_class,
     compute_class_weights,
 )
+from src.utils.rule_io import RuleExporter
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +190,8 @@ class SemanticForest:
         torch_device: str = "auto",
         n_generations: int = 3,
         seed: Optional[int] = None,
+        task: str = "classification",
+        fixed_rules: Optional[List[DecisionPath]] = None,
     ) -> None:
         self.graph = graph
         self.n_trees = n_trees
@@ -213,6 +216,8 @@ class SemanticForest:
         self.torch_device = torch_device
         self.n_generations = n_generations
         self.seed = seed
+        self.task = task
+        self.fixed_rules = fixed_rules or []
 
         self._rng = np.random.RandomState(seed)
 
@@ -273,15 +278,21 @@ class SemanticForest:
         """
         n_samples = len(labels)
         label_array = labels.values.copy()
-        self._default_prediction = int(_majority_class(label_array))
+        if self.task == "regression":
+            self._default_prediction = float(np.mean(label_array.astype(float)))
+        else:
+            self._default_prediction = int(_majority_class(label_array))
         self._feature_columns = list(feature_df.columns)
 
-        # ── Class Weight 자동 계산 (Mode Collapse 방지) ──
-        self._class_weights = compute_class_weights(label_array)
-        logger.info(
-            "Class weights computed: %s",
-            {k: f"{v:.3f}" for k, v in self._class_weights.items()},
-        )
+        # ── Class Weight 자동 계산 (Mode Collapse 방지, classification only) ──
+        if self.task == "regression":
+            self._class_weights = None
+        else:
+            self._class_weights = compute_class_weights(label_array)
+            logger.info(
+                "Class weights computed: %s",
+                {k: f"{v:.3f}" for k, v in self._class_weights.items()},
+            )
 
         logger.info(
             "fit() started: %d samples × %d features, %d trees × %d ants, "
@@ -292,6 +303,26 @@ class SemanticForest:
             self.n_ants_per_tree,
             self.n_generations,
         )
+
+        if self.fixed_rules:
+            logger.info("Injecting %d fixed rules to pheromones.", len(self.fixed_rules))
+            for rule in self.fixed_rules:
+                raw = rule.raw_path
+                if len(raw) < 2:
+                    continue
+                delta_tau = rule.fitness / len(raw) if rule.fitness > 0 else 1.0 / len(raw)
+                for i in range(len(raw) - 1):
+                    u, v = raw[i], raw[i + 1]
+                    if self.graph.has_edge(u, v):
+                        self.graph.edges[u, v]["pheromone"] = min(
+                            self.graph.edges[u, v].get("pheromone", 1.0) + delta_tau,
+                            self.max_pheromone
+                        )
+                    if self.graph.has_edge(v, u):
+                        self.graph.edges[v, u]["pheromone"] = min(
+                            self.graph.edges[v, u].get("pheromone", 1.0) + delta_tau,
+                            self.max_pheromone
+                        )
 
         # ── 세대 반복 ──
         best_trees: List[TreeResult] = []
@@ -334,6 +365,7 @@ class SemanticForest:
                     if self.seed is not None
                     else None,
                     class_weights=self._class_weights,
+                    task=self.task,
                 )
 
                 rules = engine.extract_rules(
@@ -384,6 +416,13 @@ class SemanticForest:
             )
 
         # ── 최종 저장 ──
+        if self.fixed_rules:
+            dummy_tree_result = TreeResult(
+                rules=copy.deepcopy(self.fixed_rules),
+                oob_accuracy=1.0,
+            )
+            best_trees.append(dummy_tree_result)
+
         self.trees_ = best_trees
         self.all_rules_ = []
         for tr in self.trees_:
@@ -430,7 +469,9 @@ class SemanticForest:
         n_samples = len(feature_df)
         predictions = np.full(n_samples, fill_value=self._default_prediction)
 
-        if method == "majority":
+        if self.task == "regression":
+            predictions = self._predict_regression_mean(feature_df)
+        elif method == "majority":
             predictions = self._predict_majority(feature_df)
         elif method == "weighted":
             predictions = self._predict_weighted(feature_df)
@@ -438,6 +479,37 @@ class SemanticForest:
             raise ValueError(f"Unknown method: {method}. Use 'majority' or 'weighted'.")
 
         return predictions
+
+    def export_rules(self, filepath: str, format: str = "json", top_k: Optional[int] = None) -> None:
+        """현재 학습된 규칙을 저장한다.
+
+        Parameters
+        ----------
+        filepath : str
+            저장할 파일 경로.
+        format : str
+            'json', 'csv', 'txt', 'markdown' 지원.
+        top_k : int | None
+            상위 K개 규칙만 저장.
+        """
+        if not self.is_fitted_:
+            raise RuntimeError("fit()을 먼저 호출하세요.")
+
+        rules_to_export = self.all_rules_
+        if top_k is not None:
+            rules_to_export = rules_to_export[:top_k]
+
+        fmt = format.lower()
+        if fmt == "json":
+            RuleExporter.export_to_json(rules_to_export, filepath)
+        elif fmt == "csv":
+            RuleExporter.export_to_csv(rules_to_export, filepath)
+        elif fmt in ("md", "markdown"):
+            RuleExporter.export_to_markdown(rules_to_export, filepath)
+        elif fmt == "txt":
+            RuleExporter.export_to_txt(rules_to_export, filepath)
+        else:
+            raise ValueError(f"Unknown format: {format}")
 
     def predict_proba(
         self,
@@ -864,6 +936,26 @@ class SemanticForest:
                 final_preds[i] = self._default_prediction
 
         return final_preds
+
+    def _predict_regression_mean(self, feature_df: pd.DataFrame) -> np.ndarray:
+        """Regression prediction: average of per-tree rule predictions."""
+        n_samples = len(feature_df)
+        pred_accum = np.zeros(n_samples, dtype=float)
+        n_contributing = np.zeros(n_samples, dtype=float)
+
+        for tree_result in self.trees_:
+            tree_preds = self._apply_tree_rules(feature_df, tree_result.rules)
+            for i in range(n_samples):
+                if tree_preds[i] != -999:
+                    pred_accum[i] += tree_preds[i]
+                    n_contributing[i] += 1.0
+
+        result = np.full(n_samples, fill_value=self._default_prediction, dtype=float)
+        for i in range(n_samples):
+            if n_contributing[i] > 0:
+                result[i] = pred_accum[i] / n_contributing[i]
+
+        return result
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 유틸리티

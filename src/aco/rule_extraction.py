@@ -47,6 +47,25 @@ class SplitCondition:
             return value <= self.threshold
         return value > self.threshold
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert SplitCondition to dictionary format."""
+        return {
+            "feature": self.feature,
+            "operator": self.operator,
+            "threshold": self.threshold,
+            "info_gain": self.info_gain
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SplitCondition":
+        """Create SplitCondition from dictionary format."""
+        return cls(
+            feature=data["feature"],
+            operator=data["operator"],
+            threshold=data["threshold"],
+            info_gain=data.get("info_gain", 0.0)
+        )
+
     def __repr__(self) -> str:
         return (
             f"{self.feature} {self.operator} {self.threshold:.4f} "
@@ -160,6 +179,42 @@ class DecisionPath:
             if val is None or not cond.evaluate(val):
                 return None
         return self.prediction
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert DecisionPath to dictionary format."""
+        return {
+            "conditions": [c.to_dict() for c in self.conditions],
+            "prediction": self.prediction,
+            "coverage": self.coverage,
+            "accuracy": self.accuracy,
+            "raw_path": self.raw_path,
+            "total_info_gain": self.total_info_gain,
+            "leaf_class_dist": self.leaf_class_dist,
+            "f1_score": self.f1_score,
+            "balanced_accuracy": self.balanced_accuracy
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DecisionPath":
+        """Create DecisionPath from dictionary format."""
+        # Convert dictionary keys for leaf_class_dist back to integers if possible
+        leaf_dist = data.get("leaf_class_dist", {})
+        try:
+            leaf_dist = {int(k): v for k, v in leaf_dist.items()}
+        except Exception:
+            pass
+
+        return cls(
+            conditions=[SplitCondition.from_dict(c) for c in data.get("conditions", [])],
+            prediction=data.get("prediction"),
+            coverage=data.get("coverage", 0),
+            accuracy=data.get("accuracy", 0.0),
+            raw_path=data.get("raw_path", []),
+            total_info_gain=data.get("total_info_gain", 0.0),
+            leaf_class_dist=leaf_dist,
+            f1_score=data.get("f1_score", 0.0),
+            balanced_accuracy=data.get("balanced_accuracy", 0.0)
+        )
 
     def __repr__(self) -> str:
         return (
@@ -276,6 +331,28 @@ def _gain_ratio(
     return ig / split_info
 
 
+def _variance_reduction(
+    parent_labels: np.ndarray,
+    left_labels: np.ndarray,
+    right_labels: np.ndarray,
+    class_weights: Optional[Dict[int, float]] = None,
+) -> float:
+    """Variance reduction for regression splits.
+
+    VR = Var(parent) - [n_L/n * Var(L) + n_R/n * Var(R)]
+    """
+    n = len(parent_labels)
+    if n == 0:
+        return 0.0
+    n_left, n_right = len(left_labels), len(right_labels)
+    if n_left == 0 or n_right == 0:
+        return 0.0
+    var_parent = float(np.var(parent_labels.astype(float)))
+    var_left = float(np.var(left_labels.astype(float)))
+    var_right = float(np.var(right_labels.astype(float)))
+    return var_parent - (n_left / n * var_left + n_right / n * var_right)
+
+
 def _chi_square(
     parent_labels: np.ndarray,
     left_labels: np.ndarray,
@@ -340,6 +417,10 @@ def _info_gain(
         - ``"semantic_similarity"`` — 시맨틱 유사도 기반 분할
         - ``"pig_semantic"`` — PIG + Semantic Similarity 결합
     """
+    # Regression criterion
+    if criterion == "variance_reduction":
+        return _variance_reduction(parent_labels, left_labels, right_labels, class_weights)
+
     # C5.0 / CHAID는 별도 함수로 분기
     if criterion == "gain_ratio":
         return _gain_ratio(parent_labels, left_labels, right_labels, class_weights)
@@ -561,11 +642,13 @@ class RuleExtractionEngine:
         semantic_weight: float = 0.3,
         seed: Optional[int] = None,
         class_weights: Optional[Dict[int, float]] = None,
+        task: str = "classification",
     ) -> None:
         self.graph = graph
         self.feature_df = feature_df.copy()
         self.labels = label_series.values.copy()
         self.feature_columns = list(feature_df.columns)
+        self.task = task
 
         self.alpha = alpha
         self.beta = beta
@@ -596,7 +679,9 @@ class RuleExtractionEngine:
         self.jump_gamma = float(jump_gamma)
 
         # ── Class Weight: 불균형 보정 (자동 계산 또는 외부 지정) ──
-        if class_weights is not None:
+        if self.task == "regression":
+            self.class_weights = None
+        elif class_weights is not None:
             self.class_weights = class_weights
         else:
             # 자동 계산: W_1 = N_neg / N_pos
@@ -748,9 +833,12 @@ class RuleExtractionEngine:
                 new_left = active_mask & split_mask
                 new_right = active_mask & (~split_mask)
 
-                # 분기 방향 결정: class_weights가 있으면 가중 순도 기반
-                # 확률적 선택으로 다양한 경로 탐색
-                if self.class_weights and new_left.sum() > 0 and new_right.sum() > 0:
+                # 분기 방향 결정: regression은 variance 기반, classification은 purity 기반
+                if self.task == "regression":
+                    left_var = float(np.var(lb[new_left].astype(float))) if new_left.sum() > 0 else float("inf")
+                    right_var = float(np.var(lb[new_right].astype(float))) if new_right.sum() > 0 else float("inf")
+                    go_left = left_var <= right_var
+                elif self.class_weights and new_left.sum() > 0 and new_right.sum() > 0:
                     left_wp = _weighted_purity(lb[new_left], self.class_weights)
                     right_wp = _weighted_purity(lb[new_right], self.class_weights)
                     total_wp = left_wp + right_wp
@@ -791,63 +879,78 @@ class RuleExtractionEngine:
 
         # ── DecisionPath 조립 ──
         active_labels = self.labels[active_mask]
-        if len(active_labels) > 0:
-            # Class weight 반영 가중 다수결: 소수 클래스가 일정 비율
-            # 이상이면 소수 클래스를 예측하여 Mode Collapse 방지
-            prediction = int(_weighted_majority_class(
-                active_labels, self.class_weights,
-            ))
-            correct = (active_labels == prediction).sum()
-            accuracy = float(correct / len(active_labels))
+        if self.task == "regression":
+            # Regression: mean prediction, R²-like accuracy, MSE-based fitness
+            if len(active_labels) > 0:
+                prediction = float(np.mean(active_labels.astype(float)))
+                mse = float(np.mean((active_labels.astype(float) - prediction) ** 2))
+                total_var = float(np.var(self.labels.astype(float)))
+                accuracy = max(0.0, 1.0 - mse / total_var) if total_var > 0 else 0.0
+            else:
+                prediction = float(np.mean(self.labels.astype(float)))
+                accuracy = 0.0
+
+            total_ig = sum(c.info_gain for c in conditions)
+
+            leaf_class_dist: Dict[int, int] = {}
+            # For regression, use R²-like score as f1_score so fitness formula works
+            f1 = accuracy
+            bal_acc = accuracy
+
         else:
-            prediction = int(_weighted_majority_class(
-                self.labels, self.class_weights,
-            ))
-            accuracy = 0.0
+            if len(active_labels) > 0:
+                # Class weight 반영 가중 다수결: 소수 클래스가 일정 비율
+                # 이상이면 소수 클래스를 예측하여 Mode Collapse 방지
+                prediction = int(_weighted_majority_class(
+                    active_labels, self.class_weights,
+                ))
+                correct = (active_labels == prediction).sum()
+                accuracy = float(correct / len(active_labels))
+            else:
+                prediction = int(_weighted_majority_class(
+                    self.labels, self.class_weights,
+                ))
+                accuracy = 0.0
 
-        total_ig = sum(c.info_gain for c in conditions)
+            total_ig = sum(c.info_gain for c in conditions)
 
-        # ── 리프 노드 클래스 분포 및 F1/BalancedAcc 계산 (Task 2) ──
-        leaf_class_dist: Dict[int, int] = {}
-        f1 = 0.0
-        bal_acc = 0.0
-        if len(active_labels) > 0:
-            classes, counts = np.unique(active_labels, return_counts=True)
-            leaf_class_dist = {int(c): int(n) for c, n in zip(classes, counts)}
+            # ── 리프 노드 클래스 분포 및 F1/BalancedAcc 계산 (Task 2) ──
+            leaf_class_dist = {}
+            f1 = 0.0
+            bal_acc = 0.0
+            if len(active_labels) > 0:
+                classes, counts = np.unique(active_labels, return_counts=True)
+                leaf_class_dist = {int(c): int(n) for c, n in zip(classes, counts)}
 
-            # 전체 학습 데이터에 대해 이 규칙의 예측을 평가
-            all_preds = np.full(len(self.labels), -1)
-            for idx in range(len(self.labels)):
-                match = True
-                for cond in conditions:
-                    val = self.feature_df[cond.feature].iloc[idx]
-                    if not cond.evaluate(val):
-                        match = False
-                        break
-                if match:
-                    all_preds[idx] = prediction
+                # 전체 학습 데이터에 대해 이 규칙의 예측을 평가
+                all_preds = np.full(len(self.labels), -1)
+                for idx in range(len(self.labels)):
+                    match = True
+                    for cond in conditions:
+                        val = self.feature_df[cond.feature].iloc[idx]
+                        if not cond.evaluate(val):
+                            match = False
+                            break
+                    if match:
+                        all_preds[idx] = prediction
 
-            # F1-score 계산 (커버된 샘플만, fn_uncovered 제외)
-            # 개별 규칙의 F1은 커버 범위 내에서만 평가한다.
-            # fn_uncovered를 포함하면 좁은 class-1 규칙의 F1이
-            # 사실상 0이 되어 다시 Mode Collapse에 빠진다.
-            # 숲 전체의 커버리지는 앙상블 단계에서 보장된다.
-            covered_mask = all_preds != -1
-            if covered_mask.sum() > 0:
-                y_t = self.labels[covered_mask]
-                y_p = all_preds[covered_mask]
-                tp = int(np.sum((y_t == 1) & (y_p == 1)))
-                fp = int(np.sum((y_t == 0) & (y_p == 1)))
-                fn = int(np.sum((y_t == 1) & (y_p == 0)))
-                tn = int(np.sum((y_t == 0) & (y_p == 0)))
+                # F1-score 계산 (커버된 샘플만, fn_uncovered 제외)
+                covered_mask = all_preds != -1
+                if covered_mask.sum() > 0:
+                    y_t = self.labels[covered_mask]
+                    y_p = all_preds[covered_mask]
+                    tp = int(np.sum((y_t == 1) & (y_p == 1)))
+                    fp = int(np.sum((y_t == 0) & (y_p == 1)))
+                    fn = int(np.sum((y_t == 1) & (y_p == 0)))
+                    tn = int(np.sum((y_t == 0) & (y_p == 0)))
 
-                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+                    prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                    rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                    f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
 
-                tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                tnr = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-                bal_acc = (tpr + tnr) / 2.0
+                    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                    tnr = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+                    bal_acc = (tpr + tnr) / 2.0
 
         path_obj = DecisionPath(
             conditions=conditions,
@@ -948,12 +1051,19 @@ class RuleExtractionEngine:
                     predictions[idx] = pred
                     covered[idx] = True
 
-        # 미커버 샘플은 다수결
-        default_pred = int(_majority_class(labels))
+        # 미커버 샘플은 다수결 (classification) 또는 평균 (regression)
+        if self.task == "regression":
+            default_pred = float(np.mean(labels.astype(float)))
+        else:
+            default_pred = int(_majority_class(labels))
         predictions[~covered] = default_pred
 
-        correct = (predictions == labels).sum()
-        accuracy = float(correct / n_samples) if n_samples > 0 else 0.0
+        if self.task == "regression":
+            mse = float(np.mean((predictions - labels.astype(float)) ** 2))
+            accuracy = max(0.0, 1.0 - mse / float(np.var(labels.astype(float)))) if np.var(labels.astype(float)) > 0 else 0.0
+        else:
+            correct = (predictions == labels).sum()
+            accuracy = float(correct / n_samples) if n_samples > 0 else 0.0
 
         return {
             "n_rules": len(rules),

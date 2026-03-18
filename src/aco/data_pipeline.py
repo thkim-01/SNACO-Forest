@@ -41,6 +41,12 @@ DATASET_EXECUTION_ORDER = [
     "clintox",
     "tox21",
     "sider",
+    "esol",
+    "freesolv",
+    "lipophilicity",
+    "qm7",
+    "qm8",
+    "qm9",
 ]
 
 
@@ -96,8 +102,12 @@ def load_dataset(
     valid_mask = df[actual_target].notna()
     df = df[valid_mask].reset_index(drop=True)
 
-    # label을 정수로 변환
-    labels = df[actual_target].astype(int).values
+    # task type에 따른 label 변환
+    task_type = config.get("task", "classification")
+    if task_type == "regression":
+        labels = df[actual_target].astype(float).values
+    else:
+        labels = df[actual_target].astype(int).values
 
     # SMILES 추출
     smiles_list = df[smiles_col].tolist()
@@ -109,14 +119,24 @@ def load_dataset(
         smiles_list = [smiles_list[i] for i in indices]
         labels = labels[indices]
 
-    logger.info(
-        "Loaded %s [%s]: %d samples (pos=%d, neg=%d)",
-        dataset_name,
-        actual_target,
-        len(labels),
-        int(np.sum(labels == 1)),
-        int(np.sum(labels == 0)),
-    )
+    if task_type == "regression":
+        logger.info(
+            "Loaded %s [%s]: %d samples (mean=%.4f, std=%.4f)",
+            dataset_name,
+            actual_target,
+            len(labels),
+            float(np.mean(labels)),
+            float(np.std(labels)),
+        )
+    else:
+        logger.info(
+            "Loaded %s [%s]: %d samples (pos=%d, neg=%d)",
+            dataset_name,
+            actual_target,
+            len(labels),
+            int(np.sum(labels == 1)),
+            int(np.sum(labels == 0)),
+        )
     return smiles_list, labels, actual_target
 
 
@@ -143,6 +163,29 @@ def stratified_split(
 
     rng.shuffle(train_indices)
     rng.shuffle(test_indices)
+
+    train_df = feature_df.iloc[train_indices].reset_index(drop=True)
+    test_df = feature_df.iloc[test_indices].reset_index(drop=True)
+    train_labels = labels[train_indices]
+    test_labels = labels[test_indices]
+
+    return train_df, test_df, train_labels, test_labels
+
+
+def random_split(
+    feature_df: pd.DataFrame,
+    labels: np.ndarray,
+    test_size: float = 0.2,
+    seed: int = 42,
+) -> Tuple[pd.DataFrame, pd.DataFrame, np.ndarray, np.ndarray]:
+    """Random (non-stratified) split for regression datasets."""
+    rng = np.random.RandomState(seed)
+    n = len(labels)
+    indices = np.arange(n)
+    rng.shuffle(indices)
+    n_test = max(1, int(n * test_size))
+    test_indices = indices[:n_test]
+    train_indices = indices[n_test:]
 
     train_df = feature_df.iloc[train_indices].reset_index(drop=True)
     test_df = feature_df.iloc[test_indices].reset_index(drop=True)
@@ -236,6 +279,25 @@ def compute_metrics(
             )
 
     return metrics
+
+
+def compute_regression_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> Dict[str, float]:
+    """Regression metrics: MAE, RMSE, R²."""
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    n = len(y_true)
+    if n == 0:
+        return {"mae": 0.0, "rmse": 0.0, "r2": 0.0}
+    residuals = y_true - y_pred
+    mae = float(np.mean(np.abs(residuals)))
+    rmse = float(np.sqrt(np.mean(residuals ** 2)))
+    ss_res = float(np.sum(residuals ** 2))
+    ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    return {"mae": mae, "rmse": rmse, "r2": r2}
 
 
 def validate_rule_hierarchical_inheritance(
@@ -439,6 +501,7 @@ class ToxicityDataPipeline:
         compute_backend: Optional[str] = None,
         torch_device: Optional[str] = None,
         seed: Optional[int] = None,
+        fixed_rules: Optional[List[Any]] = None,
         skip_fit: bool = False,
     ) -> Dict[str, Any]:
         """단일 데이터셋에 대해 전체 파이프라인을 실행한다.
@@ -500,11 +563,12 @@ class ToxicityDataPipeline:
         )
 
         if _criterion not in {"entropy", "gini", "gain_ratio", "chi_square",
-                                  "pig", "semantic_similarity", "pig_semantic"}:
+                                  "pig", "semantic_similarity", "pig_semantic",
+                                  "variance_reduction"}:
             raise ValueError(
                 f"Unsupported criterion '{_criterion}'. "
                 "Use 'entropy', 'gini', 'gain_ratio', 'chi_square', "
-                "'pig', 'semantic_similarity', or 'pig_semantic'."
+                "'pig', 'semantic_similarity', 'pig_semantic', or 'variance_reduction'."
             )
 
         _pig_alpha = (
@@ -574,17 +638,34 @@ class ToxicityDataPipeline:
         )
 
         # ── 3. Train/Test 분할 ──
-        logger.info("Step 3/10: Stratified train/test split")
-        train_df, test_df, train_labels, test_labels = stratified_split(
-            feature_df, labels, test_size=_test_size, seed=_seed,
-        )
-        logger.info(
-            "  Split: train=%d (pos=%d), test=%d (pos=%d)",
-            len(train_labels),
-            int(np.sum(train_labels == 1)),
-            len(test_labels),
-            int(np.sum(test_labels == 1)),
-        )
+        _task_type = ds_cfg.get("task", "classification")
+        _split_strategy = ds_cfg.get("split_strategy", "stratified")
+
+        if _task_type == "regression" or _split_strategy == "random":
+            logger.info("Step 3/10: Random train/test split")
+            train_df, test_df, train_labels, test_labels = random_split(
+                feature_df, labels, test_size=_test_size, seed=_seed,
+            )
+        else:
+            logger.info("Step 3/10: Stratified train/test split")
+            train_df, test_df, train_labels, test_labels = stratified_split(
+                feature_df, labels, test_size=_test_size, seed=_seed,
+            )
+
+        if _task_type == "regression":
+            logger.info(
+                "  Split: train=%d, test=%d",
+                len(train_labels),
+                len(test_labels),
+            )
+        else:
+            logger.info(
+                "  Split: train=%d (pos=%d), test=%d (pos=%d)",
+                len(train_labels),
+                int(np.sum(train_labels == 1)),
+                len(test_labels),
+                int(np.sum(test_labels == 1)),
+            )
 
         # ── 4. 온톨로지 라우팅 & 그래프 (1:1) ──
         logger.info("Step 4/10: Routing ontology graph")
@@ -674,6 +755,7 @@ class ToxicityDataPipeline:
 
         # ── 8. SemanticForest 학습 ──
         logger.info("Step 8/10: Training SemanticForest")
+        _forest_criterion = "variance_reduction" if _task_type == "regression" else _criterion
         forest = SemanticForest(
             graph=G,
             n_trees=_n_trees,
@@ -689,7 +771,7 @@ class ToxicityDataPipeline:
             max_steps=defaults.get("max_steps", 80),
             min_gain=defaults.get("min_gain", 0.005),
             min_samples_leaf=max(5, int(len(train_labels) * 0.01)),
-            criterion=_criterion,
+            criterion=_forest_criterion,
             jump_penalty_base=_jump_penalty_base,
             jump_gamma=_jump_gamma,
             pig_alpha=_pig_alpha,
@@ -698,6 +780,8 @@ class ToxicityDataPipeline:
             torch_device=_torch_device,
             n_generations=_n_gen,
             seed=_seed,
+            task=_task_type,
+            fixed_rules=fixed_rules,
         )
 
         t_fit = time.time()
@@ -717,16 +801,23 @@ class ToxicityDataPipeline:
 
         # ── 9. 예측 & 평가 ──
         logger.info("Step 9/10: Predicting and evaluating")
-        test_preds_maj = forest.predict(test_df_h, method="majority")
-        test_preds_wt = forest.predict(test_df_h, method="weighted")
-        test_proba = forest.predict_proba(test_df_h)
 
-        test_m_maj = compute_metrics(test_labels, test_preds_maj, test_proba)
-        test_m_wt = compute_metrics(test_labels, test_preds_wt, test_proba)
+        if _task_type == "regression":
+            test_preds = forest.predict(test_df_h)
+            train_preds = forest.predict(train_df_h)
+            test_m = compute_regression_metrics(test_labels, test_preds)
+            train_m = compute_regression_metrics(train_labels, train_preds)
+        else:
+            test_preds_maj = forest.predict(test_df_h, method="majority")
+            test_preds_wt = forest.predict(test_df_h, method="weighted")
+            test_proba = forest.predict_proba(test_df_h)
 
-        train_preds = forest.predict(train_df_h, method="majority")
-        train_proba = forest.predict_proba(train_df_h)
-        train_m = compute_metrics(train_labels, train_preds, train_proba)
+            test_m_maj = compute_metrics(test_labels, test_preds_maj, test_proba)
+            test_m_wt = compute_metrics(test_labels, test_preds_wt, test_proba)
+
+            train_preds = forest.predict(train_df_h, method="majority")
+            train_proba = forest.predict_proba(train_df_h)
+            train_m = compute_metrics(train_labels, train_preds, train_proba)
 
         # ── 10. 페로몬 분포 ──
         all_pher = [
@@ -739,30 +830,61 @@ class ToxicityDataPipeline:
 
         # ── 결과 업데이트 ──
         logger.info("Step 10/10: Aggregating result artifacts")
-        result.update({
-            "fit_time_sec": fit_time,
-            "total_time_sec": total_time,
-            "n_trees": len(forest.trees_),
-            "n_rules": len(forest.all_rules_),
-            "train_accuracy": train_m["accuracy"],
-            "train_f1": train_m["f1"],
-            "test_accuracy_majority": test_m_maj["accuracy"],
-            "test_balanced_accuracy_majority": test_m_maj["balanced_accuracy"],
-            "test_precision_majority": test_m_maj["precision"],
-            "test_recall_majority": test_m_maj["recall"],
-            "test_f1_majority": test_m_maj["f1"],
-            "test_auc_roc": test_m_maj.get("auc_roc", -1),
-            "test_accuracy_weighted": test_m_wt["accuracy"],
-            "test_f1_weighted": test_m_wt["f1"],
-            "pheromone_sparsity_pct": (
-                100 * high_pher / len(all_pher) if all_pher else 0
-            ),
-            "feature_importance": dict(forest.get_feature_importance()),
-            "hierarchy_validation": validate_rule_hierarchical_inheritance(
-                G, forest.all_rules_
-            ),
-            "status": "complete",
-        })
+
+        if _task_type == "regression":
+            result.update({
+                "task": "regression",
+                "fit_time_sec": fit_time,
+                "total_time_sec": total_time,
+                "n_trees": len(forest.trees_),
+                "n_rules": len(forest.all_rules_),
+                "train_mae": train_m["mae"],
+                "train_rmse": train_m["rmse"],
+                "train_r2": train_m["r2"],
+                "test_mae": test_m["mae"],
+                "test_rmse": test_m["rmse"],
+                "test_r2": test_m["r2"],
+                "pheromone_sparsity_pct": (
+                    100 * high_pher / len(all_pher) if all_pher else 0
+                ),
+                "feature_importance": dict(forest.get_feature_importance()),
+                "hierarchy_validation": validate_rule_hierarchical_inheritance(
+                    G, forest.all_rules_
+                ),
+                "status": "complete",
+                "trained_forest": forest,
+                "test_df": test_df_h,
+                "test_labels": test_labels,
+            })
+        else:
+            result.update({
+                "task": "classification",
+                "fit_time_sec": fit_time,
+                "total_time_sec": total_time,
+                "n_trees": len(forest.trees_),
+                "n_rules": len(forest.all_rules_),
+                "train_accuracy": train_m["accuracy"],
+                "train_f1": train_m["f1"],
+                "test_accuracy_majority": test_m_maj["accuracy"],
+                "test_balanced_accuracy_majority": test_m_maj["balanced_accuracy"],
+                "test_precision_majority": test_m_maj["precision"],
+                "test_recall_majority": test_m_maj["recall"],
+                "test_f1_majority": test_m_maj["f1"],
+                "test_auc_roc": test_m_maj.get("auc_roc", -1),
+                "test_accuracy_weighted": test_m_wt["accuracy"],
+                "test_f1_weighted": test_m_wt["f1"],
+                "pheromone_sparsity_pct": (
+                    100 * high_pher / len(all_pher) if all_pher else 0
+                ),
+                "feature_importance": dict(forest.get_feature_importance()),
+                "hierarchy_validation": validate_rule_hierarchical_inheritance(
+                    G, forest.all_rules_
+                ),
+                "status": "complete",
+                "trained_forest": forest,
+                "test_df": test_df_h,
+                "test_labels": test_labels,
+            })
 
         hv = result["hierarchy_validation"]
         logger.info(
@@ -775,14 +897,23 @@ class ToxicityDataPipeline:
             hv["n_rules_with_order_violation"],
         )
 
-        logger.info(
-            "  RESULT: acc=%.4f, bal_acc=%.4f, f1=%.4f, auc=%.4f (%.1fs)",
-            test_m_maj["accuracy"],
-            test_m_maj["balanced_accuracy"],
-            test_m_maj["f1"],
-            test_m_maj.get("auc_roc", -1),
-            total_time,
-        )
+        if _task_type == "regression":
+            logger.info(
+                "  RESULT: MAE=%.4f, RMSE=%.4f, R²=%.4f (%.1fs)",
+                test_m["mae"],
+                test_m["rmse"],
+                test_m["r2"],
+                total_time,
+            )
+        else:
+            logger.info(
+                "  RESULT: acc=%.4f, bal_acc=%.4f, f1=%.4f, auc=%.4f (%.1fs)",
+                test_m_maj["accuracy"],
+                test_m_maj["balanced_accuracy"],
+                test_m_maj["f1"],
+                test_m_maj.get("auc_roc", -1),
+                total_time,
+            )
 
         return result
 
