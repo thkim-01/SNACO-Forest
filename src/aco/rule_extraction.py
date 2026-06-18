@@ -180,6 +180,45 @@ class DecisionPath:
                 return None
         return self.prediction
 
+    def evaluate_tensor(self, X_gpu: "torch.Tensor", feature_columns: list) -> "torch.Tensor":
+        """단일 GPU 텐서 내 수만개의 row를 일괄 조건 검색.
+        
+        Parameters
+        ----------
+        X_gpu : torch.Tensor 
+            대상 데이터 텐서 (N, D).
+        feature_columns : list[str]
+            컬럼 매핑을 위한 리스트.
+            
+        Returns
+        -------
+        torch.Tensor
+            불리언 텐서 (N,)
+        """
+        import torch
+        n_samples = X_gpu.size(0)
+        mask = torch.ones(n_samples, dtype=torch.bool, device=X_gpu.device)
+        
+        for cond in self.conditions:
+            try:
+                col_idx = feature_columns.index(cond.feature)
+            except ValueError:
+                return torch.zeros(n_samples, dtype=torch.bool, device=X_gpu.device)
+                
+            x_feat = X_gpu[:, col_idx]
+            if cond.operator == "<=":
+                mask &= (x_feat <= cond.threshold)
+            elif cond.operator == ">":
+                mask &= (x_feat > cond.threshold)
+            elif cond.operator == "<":
+                mask &= (x_feat < cond.threshold)
+            elif cond.operator == ">=":
+                mask &= (x_feat >= cond.threshold)
+            elif cond.operator == "==":
+                mask &= (x_feat == cond.threshold)
+                
+        return mask
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert DecisionPath to dictionary format."""
         return {
@@ -544,6 +583,15 @@ def find_best_threshold(
     if len(fv) < 2:
         return float(np.nanmedian(feature_values)), 0.0, "<="
 
+    # Phase 4.2: 스케일링 최적화 - 대규모 데이터(HIV 등)에 대한 Mini-batch IG 계산
+    if len(fv) > 5000:
+        rng = np.random.default_rng()
+        sample_idx = rng.choice(len(fv), size=5000, replace=False)
+        fv = fv[sample_idx]
+        lb = lb[sample_idx]
+
+    # 적응형 후보 수: 데이터 크기에 비례 (최소 16, 최대 64)
+    n_candidates = min(64, max(16, len(fv) // 20))
     # 분위수 기반 후보 임계값
     percentiles = np.linspace(5, 95, n_candidates)
     thresholds = np.unique(np.percentile(fv, percentiles))
@@ -643,12 +691,21 @@ class RuleExtractionEngine:
         seed: Optional[int] = None,
         class_weights: Optional[Dict[int, float]] = None,
         task: str = "classification",
+        low_gain_features: Optional[Set[str]] = None,
+        X_gpu=None,
+        y_gpu=None,
+        class_weights_gpu=None,
     ) -> None:
         self.graph = graph
         self.feature_df = feature_df.copy()
         self.labels = label_series.values.copy()
         self.feature_columns = list(feature_df.columns)
         self.task = task
+        self.low_gain_features = low_gain_features if low_gain_features is not None else set()
+        
+        self.X_gpu = X_gpu
+        self.y_gpu = y_gpu
+        self.class_weights_gpu = class_weights_gpu
 
         self.alpha = alpha
         self.beta = beta
@@ -736,6 +793,8 @@ class RuleExtractionEngine:
         start_node: Optional[str] = None,
         *,
         explore_mode: str = "auto",
+        generation_progress: float = 0.0,
+        used_features_penalty: Optional[Set[str]] = None,
     ) -> DecisionPath:
         """개미 한 마리를 탐색시키고, 의사결정 경로(규칙)를 반환한다.
 
@@ -757,7 +816,7 @@ class RuleExtractionEngine:
 
         # 출발 노드 결정
         if start_node is None:
-            start_node = self._pick_start_node(explore_mode)
+            start_node = self._pick_start_node(explore_mode, generation_progress)
 
         # ── 그래프 탐색 ──
         raw_path: List[str] = [start_node]
@@ -792,7 +851,7 @@ class RuleExtractionEngine:
                 break
 
             # ── 다음 노드 선택 (ACO 확률 규칙) ──
-            next_node = self._select_next(current, candidates, active_mask)
+            next_node = self._select_next(current, candidates, active_mask, used_features_penalty)
             raw_path.append(next_node)
             visited.add(next_node)
             current = next_node
@@ -972,6 +1031,7 @@ class RuleExtractionEngine:
         start_node: Optional[str] = None,
         *,
         deduplicate: bool = True,
+        generation_progress: float = 0.0,
     ) -> List[DecisionPath]:
         """여러 개미를 탐색시키고, 의사결정 규칙 리스트를 반환한다.
 
@@ -990,10 +1050,19 @@ class RuleExtractionEngine:
             적합도 내림차순 정렬.
         """
         paths: List[DecisionPath] = []
+        used_features: Set[str] = set()
         for i in range(n_ants):
-            path = self.extract_single_rule(start_node, explore_mode="auto")
+            path = self.extract_single_rule(
+                start_node,
+                explore_mode="auto",
+                generation_progress=generation_progress,
+                used_features_penalty=used_features,
+            )
             if path.depth > 0:
                 paths.append(path)
+                # 사용된 feature 추적 (다양성 강화)
+                for cond in path.conditions:
+                    used_features.add(cond.feature)
 
                 # 좋은 경로의 페로몬 강화
                 self._update_pheromones(path)
@@ -1076,13 +1145,21 @@ class RuleExtractionEngine:
     # 내부 구현
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def _pick_start_node(self, explore_mode: str) -> str:
-        """탐색 모드에 따라 출발 노드를 결정한다."""
+    def _pick_start_node(self, explore_mode: str, generation_progress: float = 0.0) -> str:
+        """탐색 모드에 따라 출발 노드를 결정한다.
+
+        generation_progress (0.0~1.0): 초기 세대 → 탐색 중심, 후기 → 활용 중심
+        """
         G = self.graph
         feature_nodes = list(self._feat_to_col.keys())
 
+        # 세대 진행도에 따른 feature-direct 시작 비율 조절
+        # gen=0: 50% feature, 20% hub, 30% random (탐색)
+        # gen=last: 80% feature, 15% hub, 5% random (활용)
+        feature_rate = 0.50 + 0.30 * generation_progress
+
         if explore_mode == "feature" or (
-            explore_mode == "auto" and self._rng.random() < 0.70
+            explore_mode == "auto" and self._rng.random() < feature_rate
         ):
             # feature 노드에서 직접 출발 (다양한 규칙 보장)
             if feature_nodes:
@@ -1139,6 +1216,7 @@ class RuleExtractionEngine:
         current: str,
         candidates: List[str],
         active_mask: np.ndarray,
+        used_features_penalty: Optional[Set[str]] = None,
     ) -> str:
         """ACO 확률 전이 규칙.
 
@@ -1165,6 +1243,12 @@ class RuleExtractionEngine:
             eta_base = self._compute_heuristic(cand, active_mask)
             jump_penalty = self._compute_jump_penalty(current, cand)
             eta = eta_base * jump_penalty
+
+            # Feature blackout: 이미 사용된 feature의 η 감소 (다양성 촉진)
+            if used_features_penalty and cand in self._feat_to_col:
+                col_name = self._feat_to_col[cand]
+                if col_name in used_features_penalty:
+                    eta *= 0.5
 
             w = (tau ** self.alpha) * (eta ** self.beta)
             weights.append(max(w, 1e-12))
@@ -1206,17 +1290,46 @@ class RuleExtractionEngine:
         fv = self.feature_df[col_name].values[active_mask]
         lb = self.labels[active_mask]
 
+        # Phase 4.1: 스케일링 - 이전 세대 등에서 완전히 무의미했던 feature 스킵
+        if hasattr(self, 'low_gain_features') and node_id in self.low_gain_features:
+            return FEATURE_BASE * 0.5
+
         if len(lb) < 2:
             return FEATURE_BASE
+            
+        import torch
+        # PyTorch 가속: Entropy와 Gini의 경우에만 
+        if hasattr(self, 'X_gpu') and self.X_gpu is not None and self.criterion in ("entropy", "gini"):
+            from src.aco.torch_criterion import torch_find_best_threshold
+            col_idx = self.feature_columns.index(col_name)
+            
+            # Create active mask tensor on the fly for subset slicing
+            torch_mask = torch.from_numpy(active_mask).to(self.X_gpu.device)
+            x_col = self.X_gpu[:, col_idx][torch_mask]
+            y_col = self.y_gpu[torch_mask]
+            
+            _, ig_val, _ = torch_find_best_threshold(
+                x_col=x_col,
+                y=y_col,
+                criterion=self.criterion,
+                n_candidates=16,
+                torch_weights=self.class_weights_gpu
+            )
+            ig = float(ig_val)
+        else:
+            _, ig, _ = find_best_threshold(
+                fv, lb, self.criterion, n_candidates=16,
+                class_weights=self.class_weights,
+                graph_scorer=self._graph_scorer,
+                feature_node=node_id,
+                pig_alpha=self.pig_alpha,
+                semantic_weight=self.semantic_weight,
+            )
 
-        _, ig, _ = find_best_threshold(
-            fv, lb, self.criterion, n_candidates=16,
-            class_weights=self.class_weights,
-            graph_scorer=self._graph_scorer,
-            feature_node=node_id,
-            pig_alpha=self.pig_alpha,
-            semantic_weight=self.semantic_weight,
-        )
+        # IG가 매우 낮은 feature는 이후 세대에서 생략하도록 등록 (초기 노드 탐색일 경우)
+        if hasattr(self, 'low_gain_features') and active_mask.sum() > 0.9 * len(self.labels):
+            if ig < 0.0001:
+                self.low_gain_features.add(node_id)
 
         # η = base + IG 스케일링 (IG는 보통 0~1)
         return FEATURE_BASE + ig * 10.0

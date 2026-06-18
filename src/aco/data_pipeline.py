@@ -41,6 +41,7 @@ DATASET_EXECUTION_ORDER = [
     "clintox",
     "tox21",
     "sider",
+    "muv",
     "esol",
     "freesolv",
     "lipophilicity",
@@ -200,7 +201,7 @@ def compute_metrics(
     y_pred: np.ndarray,
     y_proba: Optional[np.ndarray] = None,
 ) -> Dict[str, float]:
-    """평가 메트릭 계산 (accuracy, balanced_accuracy, F1, precision, recall, AUC-ROC)."""
+    """평가 메트릭 계산 (accuracy, balanced_accuracy, F1, precision, recall, AUC-ROC, PRC-AUC)."""
     y_true = np.asarray(y_true)
     y_pred = np.asarray(y_pred)
     n = len(y_true)
@@ -231,9 +232,11 @@ def compute_metrics(
         "precision": precision,
         "recall": recall,
         "f1": f1,
+        "auc_roc": -1.0,
+        "prc_auc": -1.0,
     }
 
-    # AUC-ROC (순수 numpy 구현)
+    # AUC 계산
     if y_proba is not None:
         y_proba_arr = np.asarray(y_proba)
         unique_classes = np.unique(y_true)
@@ -241,42 +244,33 @@ def compute_metrics(
             try:
                 if y_proba_arr.ndim == 2:
                     if y_proba_arr.shape[1] < 2:
-                        raise ValueError(
-                            "predict_proba returned 2D array with <2 columns"
-                        )
+                        raise ValueError("predict_proba returned <2 columns")
                     pos_proba = y_proba_arr[:, 1]
                 else:
                     pos_proba = y_proba_arr.reshape(-1)
 
-                if len(pos_proba) != n:
-                    raise ValueError(
-                        f"Probability length mismatch: got {len(pos_proba)}, expected {n}"
-                    )
-
-                sorted_idx = np.argsort(-pos_proba)
-                y_sorted = y_true[sorted_idx]
-                n_pos = np.sum(y_true == 1)
-                n_neg = n - n_pos
-                if n_pos > 0 and n_neg > 0:
-                    tpr_arr = np.cumsum(y_sorted == 1) / n_pos
-                    fpr_arr = np.cumsum(y_sorted == 0) / n_neg
-                    if hasattr(np, "trapezoid"):
-                        auc = float(np.trapezoid(tpr_arr, fpr_arr))
-                    else:
-                        auc = float(np.trapz(tpr_arr, fpr_arr))
-                    metrics["auc_roc"] = auc
+                # Sklearn 활용 (가능할 경우)
+                try:
+                    from sklearn.metrics import roc_auc_score, average_precision_score
+                    metrics["auc_roc"] = float(roc_auc_score(y_true, pos_proba))
+                    metrics["prc_auc"] = float(average_precision_score(y_true, pos_proba))
+                except ImportError:
+                    # Numpy fallback (ROC-AUC only)
+                    sorted_idx = np.argsort(-pos_proba)
+                    y_sorted = y_true[sorted_idx]
+                    n_pos = np.sum(y_true == 1)
+                    n_neg = n - n_pos
+                    if n_pos > 0 and n_neg > 0:
+                        tpr_arr = np.cumsum(y_sorted == 1) / n_pos
+                        fpr_arr = np.cumsum(y_sorted == 0) / n_neg
+                        if hasattr(np, "trapezoid"):
+                            metrics["auc_roc"] = float(np.trapezoid(tpr_arr, fpr_arr))
+                        else:
+                            metrics["auc_roc"] = float(np.trapz(tpr_arr, fpr_arr))
             except Exception as e:
-                logger.warning(
-                    "AUC-ROC unavailable: %s (classes=%s, y_proba_shape=%s)",
-                    e,
-                    unique_classes.tolist(),
-                    getattr(y_proba_arr, "shape", None),
-                )
+                logger.warning("AUC calculation failed: %s", e)
         else:
-            logger.warning(
-                "AUC-ROC skipped: y_true must contain 2 classes, got %s",
-                unique_classes.tolist(),
-            )
+            logger.warning("AUC skipped: y_true must contain 2 classes")
 
     return metrics
 
@@ -501,6 +495,8 @@ class ToxicityDataPipeline:
         compute_backend: Optional[str] = None,
         torch_device: Optional[str] = None,
         seed: Optional[int] = None,
+        evaporation_rate: Optional[float] = None,
+        min_pheromone: Optional[float] = None,
         fixed_rules: Optional[List[Any]] = None,
         skip_fit: bool = False,
     ) -> Dict[str, Any]:
@@ -533,6 +529,10 @@ class ToxicityDataPipeline:
             계산 백엔드 선택("auto" | "numpy" | "torch").
         torch_device : str | None
             Torch 장치 선택("auto", "cpu", "cuda" 등).
+        evaporation_rate : float | None
+            페로몬 증발률.
+        min_pheromone : float | None
+            최소 페로몬.
         skip_fit : bool
             True면 그래프 생성까지만 수행 (테스트/디버깅용).
 
@@ -545,12 +545,12 @@ class ToxicityDataPipeline:
         ds_cfg = self.router.get_dataset_config(dataset_name)
         defaults = self.router.get_defaults()
 
-        _n_trees = n_trees or defaults.get("n_trees", 8)
-        _n_ants = n_ants_per_tree or defaults.get("n_ants_per_tree", 25)
-        _n_gen = n_generations or defaults.get("n_generations", 3)
+        _n_trees = n_trees or ds_cfg.get("n_trees") or defaults.get("n_trees", 8)
+        _n_ants = n_ants_per_tree or ds_cfg.get("n_ants_per_tree") or defaults.get("n_ants_per_tree", 25)
+        _n_gen = n_generations or ds_cfg.get("n_generations") or defaults.get("n_generations", 3)
         _seed = seed or defaults.get("seed", 42)
         _test_size = defaults.get("test_size", 0.2)
-        _criterion = criterion or defaults.get("criterion", "entropy")
+        _criterion = criterion or ds_cfg.get("criterion") or defaults.get("criterion", "entropy")
         _jump_penalty_base = (
             jump_penalty_base
             if jump_penalty_base is not None
@@ -761,8 +761,8 @@ class ToxicityDataPipeline:
             n_trees=_n_trees,
             n_ants_per_tree=_n_ants,
             elite_ratio=defaults.get("elite_ratio", 0.2),
-            evaporation_rate=defaults.get("evaporation_rate", 0.10),
-            min_pheromone=0.01,
+            evaporation_rate=evaporation_rate if evaporation_rate is not None else defaults.get("evaporation_rate", 0.10),
+            min_pheromone=min_pheromone if min_pheromone is not None else 0.01,
             max_pheromone=50.0,
             bootstrap_ratio=defaults.get("bootstrap_ratio", 0.8),
             alpha=1.0,

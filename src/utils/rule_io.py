@@ -2,14 +2,18 @@
 Rule IO Utilities — 규칙 저장, 내보내기 및 텍스트 변환 모듈.
 """
 
+from __future__ import annotations
+
 import csv
 import json
 import logging
 import os
 from pathlib import Path
-from typing import List
+from typing import List, TYPE_CHECKING
 
-from src.aco.rule_extraction import DecisionPath
+if TYPE_CHECKING:
+    # Imported only for type checking / IDE support; avoids runtime circular import
+    from src.aco.rule_extraction import DecisionPath
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +25,7 @@ class RuleExporter:
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def export_to_json(cls, rules: List[DecisionPath], filepath: str) -> None:
+    def export_to_json(cls, rules: List["DecisionPath"], filepath: str) -> None:
         """JSON 포맷으로 규칙 내보내기."""
         cls._ensure_dir(filepath)
         data = [r.to_dict() for r in rules]
@@ -30,7 +34,7 @@ class RuleExporter:
         logger.info("Exported %d rules to JSON: %s", len(rules), filepath)
 
     @classmethod
-    def export_to_csv(cls, rules: List[DecisionPath], filepath: str) -> None:
+    def export_to_csv(cls, rules: List["DecisionPath"], filepath: str) -> None:
         """CSV 포맷으로 규칙 요약 정보 내보내기."""
         cls._ensure_dir(filepath)
         with open(filepath, "w", encoding="utf-8", newline="") as f:
@@ -53,7 +57,7 @@ class RuleExporter:
         logger.info("Exported %d rules to CSV: %s", len(rules), filepath)
 
     @classmethod
-    def export_to_markdown(cls, rules: List[DecisionPath], filepath: str) -> None:
+    def export_to_markdown(cls, rules: List["DecisionPath"], filepath: str) -> None:
         """Markdown 포맷으로 규칙 내보내기."""
         cls._ensure_dir(filepath)
         with open(filepath, "w", encoding="utf-8") as f:
@@ -68,7 +72,7 @@ class RuleExporter:
         logger.info("Exported %d rules to Markdown: %s", len(rules), filepath)
 
     @classmethod
-    def export_to_txt(cls, rules: List[DecisionPath], filepath: str) -> None:
+    def export_to_txt(cls, rules: List["DecisionPath"], filepath: str) -> None:
         """TXT 포맷으로 규칙 내보내기."""
         cls._ensure_dir(filepath)
         with open(filepath, "w", encoding="utf-8") as f:
@@ -83,7 +87,7 @@ class RuleExporter:
         logger.info("Exported %d rules to TXT: %s", len(rules), filepath)
 
     @staticmethod
-    def load_fixed_rules(filepath: str) -> List[DecisionPath]:
+    def load_fixed_rules(filepath: str) -> List["DecisionPath"]:
         """JSON 파일에서 규칙 리스트로 불러오기."""
         if not os.path.exists(filepath):
             logger.warning("Fixed rules file not found: %s", filepath)
@@ -91,7 +95,8 @@ class RuleExporter:
         
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
-            
+        
+        from src.aco.rule_extraction import DecisionPath
         rules = [DecisionPath.from_dict(d) for d in data]
         logger.info("Loaded %d fixed rules from %s", len(rules), filepath)
         return rules

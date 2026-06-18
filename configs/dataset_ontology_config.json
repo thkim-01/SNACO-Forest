@@ -8,7 +8,7 @@
       "task": "classification",
       "description": "Blood-Brain Barrier Penetration",
       "n_classes": 2,
-      "ontology": "bao",
+      "ontology": "chmo",
       "bridge_domain": "anchor",
       "heuristic_profile": "physicochemical_prior",
       "prior_bounds": {
@@ -39,6 +39,10 @@
       "ontology": "chebi",
       "bridge_domain": "chebi",
       "heuristic_profile": "binding_pocket",
+      "n_trees": 12,
+      "n_ants_per_tree": 35,
+      "n_generations": 5,
+      "criterion": "gain_ratio",
       "extra_feature_cols": [
         "MW",
         "AlogP",
@@ -186,7 +190,11 @@
         "max_depth_without_gate": 2,
         "gate_pheromone_bonus": 3.0
       },
-      "max_samples": 20000
+      "max_samples": 20000,
+      "n_trees": 15,
+      "n_ants_per_tree": 40,
+      "n_generations": 5,
+      "criterion": "pig"
     },
     "tox21": {
       "file": "data/tox21/tox21.csv",
@@ -212,6 +220,9 @@
       "ontology": "chmo",
       "bridge_domain": "anchor",
       "heuristic_profile": "hierarchical_aop",
+      "n_trees": 12,
+      "n_ants_per_tree": 30,
+      "n_generations": 4,
       "hierarchy_config": {
         "source_ontology": "chmo",
         "gate_levels": [
@@ -274,6 +285,9 @@
       "ontology": "chem2bio2rdf",
       "bridge_domain": "anchor",
       "heuristic_profile": "hierarchical_meddra",
+      "n_trees": 12,
+      "n_ants_per_tree": 30,
+      "n_generations": 4,
       "hierarchy_config": {
         "source_ontology": "chem2bio2rdf",
         "gate_levels": [
@@ -296,6 +310,148 @@
         "max_depth_without_gate": 2,
         "gate_pheromone_bonus": 2.0
       }
+    },
+    "muv": {
+      "file": "data/muv/muv.csv",
+      "smiles_col": "smiles",
+      "label_col": "MUV-712",
+      "task": "classification",
+      "description": "Maximum Unbiased Validation (17 PubChem BioAssay targets)",
+      "n_classes": 2,
+      "all_targets": [
+        "MUV-466",
+        "MUV-548",
+        "MUV-600",
+        "MUV-644",
+        "MUV-652",
+        "MUV-689",
+        "MUV-692",
+        "MUV-712",
+        "MUV-713",
+        "MUV-733",
+        "MUV-737",
+        "MUV-810",
+        "MUV-832",
+        "MUV-846",
+        "MUV-852",
+        "MUV-858",
+        "MUV-859"
+      ],
+      "ontology": "bao",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "default",
+      "max_samples": 20000,
+      "n_trees": 15,
+      "n_ants_per_tree": 40,
+      "n_generations": 5,
+      "criterion": "pig"
+    },
+    "qm7": {
+      "file": "data/qm7/qm7.csv",
+      "smiles_col": "smiles",
+      "label_col": "u0_atom",
+      "task": "regression",
+      "description": "QM7 atomization energy regression",
+      "eval_metric": "mae",
+      "split_strategy": "stratified",
+      "ontology": "dto",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "default"
+    },
+    "qm8": {
+      "file": "data/qm8/qm8.csv",
+      "smiles_col": "smiles",
+      "label_col": "E1-CC2",
+      "task": "regression",
+      "description": "QM8 quantum mechanics regression",
+      "eval_metric": "mae",
+      "split_strategy": "random",
+      "all_targets": [
+        "E1-CC2",
+        "E2-CC2",
+        "f1-CC2",
+        "f2-CC2",
+        "E1-PBE0",
+        "E2-PBE0",
+        "f1-PBE0",
+        "f2-PBE0",
+        "E1-CAM",
+        "E2-CAM",
+        "f1-CAM",
+        "f2-CAM"
+      ],
+      "ontology": "dto",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "default"
+    },
+    "qm9": {
+      "file": "data/qm9/qm9.csv",
+      "smiles_col": "smiles",
+      "label_col": "mu",
+      "task": "regression",
+      "description": "QM9 molecular property regression",
+      "eval_metric": "mae",
+      "split_strategy": "random",
+      "all_targets": [
+        "A",
+        "B",
+        "C",
+        "mu",
+        "alpha",
+        "homo",
+        "lumo",
+        "gap",
+        "r2",
+        "zpve",
+        "u0",
+        "u298",
+        "h298",
+        "g298",
+        "cv",
+        "u0_atom",
+        "u298_atom",
+        "h298_atom",
+        "g298_atom"
+      ],
+      "ontology": "dto",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "default"
+    },
+    "esol": {
+      "file": "data/esol/esol.csv",
+      "smiles_col": "smiles",
+      "label_col": "measured log solubility in mols per litre",
+      "task": "regression",
+      "description": "ESOL solubility regression",
+      "eval_metric": "rmse",
+      "split_strategy": "random",
+      "ontology": "dto",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "default"
+    },
+    "freesolv": {
+      "file": "data/freesolv/freesolv.csv",
+      "smiles_col": "smiles",
+      "label_col": "expt",
+      "task": "regression",
+      "description": "FreeSolv hydration free energy regression",
+      "eval_metric": "rmse",
+      "split_strategy": "random",
+      "ontology": "dto",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "default"
+    },
+    "lipophilicity": {
+      "file": "data/lipophilicity/Lipophilicity.csv",
+      "smiles_col": "smiles",
+      "label_col": "exp",
+      "task": "regression",
+      "description": "Lipophilicity regression",
+      "eval_metric": "rmse",
+      "split_strategy": "random",
+      "ontology": "dto",
+      "bridge_domain": "anchor",
+      "heuristic_profile": "default"
     }
   },
   "ontologies": {

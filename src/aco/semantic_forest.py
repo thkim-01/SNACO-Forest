@@ -228,6 +228,8 @@ class SemanticForest:
 
         # 학습 데이터 참조 (predict 시 default prediction에 사용)
         self._default_prediction: Any = None
+        self._optimal_threshold: float = 0.5
+        self._class_base_rate: Optional[float] = None
         self._feature_columns: List[str] = []
         self._class_weights: Optional[Dict[int, float]] = None
 
@@ -289,10 +291,32 @@ class SemanticForest:
             self._class_weights = None
         else:
             self._class_weights = compute_class_weights(label_array)
+            # 학습 데이터의 positive class 비율 (미커버 fallback용)
+            self._class_base_rate = float(np.mean(label_array == 1))
             logger.info(
-                "Class weights computed: %s",
+                "Class weights computed: %s (base_rate=%.4f)",
                 {k: f"{v:.3f}" for k, v in self._class_weights.items()},
+                self._class_base_rate,
             )
+
+        # ── PyTorch GPU Tensor 초기화 ──
+        import torch
+        if self.torch_device == "auto":
+            self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device(self.torch_device)
+            
+        self.X_gpu = torch.tensor(feature_df.values, dtype=torch.float32, device=self.device)
+        self.y_gpu = torch.tensor(label_array, dtype=torch.float32 if self.task == "regression" else torch.long, device=self.device)
+        
+        if self._class_weights is not None:
+            # 분류 가중치 텐서: index 형태 (0, 1 기반이라 가정)
+            weights_list = [self._class_weights.get(i, 1.0) for i in range(len(self._class_weights))]
+            self._class_weights_gpu = torch.tensor(weights_list, dtype=torch.float32, device=self.device)
+        else:
+            self._class_weights_gpu = None
+            
+        logger.info(f"Initialized PyTorch data tensors on device: {self.device} (Shape: {self.X_gpu.shape})")
 
         logger.info(
             "fit() started: %d samples × %d features, %d trees × %d ants, "
@@ -344,12 +368,14 @@ class SemanticForest:
                 bs_feature_df = feature_df.iloc[bs_indices].reset_index(drop=True)
                 bs_labels = pd.Series(label_array[bs_indices])
 
-                # ── RuleExtractionEngine 으로 규칙 추출 ──
-                # 엔진에 페로몬이 누적된 공유 그래프를 전달
+                # 엔진에 페로몬이 누적된 공유 그래프를 전달 (GPU 텐서도 함께 전달)
                 engine = RuleExtractionEngine(
                     graph=self.graph,
                     feature_df=bs_feature_df,
                     label_series=bs_labels,
+                    X_gpu=self.X_gpu[bs_indices] if hasattr(self, 'X_gpu') else None,
+                    y_gpu=self.y_gpu[bs_indices] if hasattr(self, 'y_gpu') else None,
+                    class_weights_gpu=getattr(self, '_class_weights_gpu', None),
                     alpha=self.alpha,
                     beta=self.beta,
                     max_path_length=self.max_path_length,
@@ -366,10 +392,13 @@ class SemanticForest:
                     else None,
                     class_weights=self._class_weights,
                     task=self.task,
+                    low_gain_features=getattr(self, '_low_gain_features', None),
                 )
 
                 rules = engine.extract_rules(
-                    n_ants=self.n_ants_per_tree, deduplicate=True
+                    n_ants=self.n_ants_per_tree,
+                    deduplicate=True,
+                    generation_progress=gen / max(self.n_generations - 1, 1),
                 )
 
                 # ── OOB 평가 ──
@@ -435,12 +464,59 @@ class SemanticForest:
         self.all_rules_ = self._deduplicate_rules(self.all_rules_)
 
         self.is_fitted_ = True
+        
+        # ── Threshold Optimization (Classification only) ──
+        if self.task == "classification":
+            self._optimal_threshold = self._compute_optimal_threshold(feature_df, label_array)
+            logger.info("Optimal Youden's J threshold set to %.4f", self._optimal_threshold)
+        else:
+            self._optimal_threshold = 0.5
+
         logger.info(
             "fit() complete: %d trees, %d unique rules total",
             len(self.trees_),
             len(self.all_rules_),
         )
         return self
+
+    def _compute_optimal_threshold(self, feature_df: pd.DataFrame, y_true: np.ndarray) -> float:
+        """Find the threshold that maximizes Youden's J statistic (TPR - FPR)."""
+        probas = self.predict_proba(feature_df)[:, 1]
+        
+        total_p = np.sum(y_true == 1)
+        total_n = np.sum(y_true == 0)
+        
+        if total_p == 0 or total_n == 0:
+            return 0.5
+            
+        sorted_indices = np.argsort(probas)[::-1]
+        y_true_sorted = y_true[sorted_indices]
+        probas_sorted = probas[sorted_indices]
+        
+        tp = 0
+        fp = 0
+        best_j = -1.0
+        best_th = 0.5
+        
+        for i in range(len(probas_sorted)):
+            if y_true_sorted[i] == 1:
+                tp += 1
+            else:
+                fp += 1
+                
+            # Only evaluate at unique threshold values
+            if i < len(probas_sorted) - 1 and probas_sorted[i] == probas_sorted[i+1]:
+                continue
+                
+            tpr = tp / total_p
+            fpr = fp / total_n
+            j = tpr - fpr
+            
+            if j > best_j:
+                best_j = j
+                best_th = probas_sorted[i]
+                
+        return float(best_th)
 
     def predict(
         self,
@@ -558,9 +634,14 @@ class SemanticForest:
             if n_contributing_trees[i] > 0:
                 result[i] = proba_accum[i] / n_contributing_trees[i]
             else:
-                # 미커버: base rate로 fallback
-                result[i, 0] = 1.0 if self._default_prediction == 0 else 0.0
-                result[i, 1] = 1.0 if self._default_prediction == 1 else 0.0
+                # 미커버: 학습 데이터의 클래스 비율(base rate)로 fallback
+                # (AUC-ROC에서 hard 0/1 대비 유리)
+                if hasattr(self, '_class_base_rate') and self._class_base_rate is not None:
+                    result[i, 0] = 1.0 - self._class_base_rate
+                    result[i, 1] = self._class_base_rate
+                else:
+                    result[i, 0] = 1.0 if self._default_prediction == 0 else 0.0
+                    result[i, 1] = 1.0 if self._default_prediction == 1 else 0.0
 
         # 확률 합이 1이 되도록 재정규화
         row_sums = result.sum(axis=1, keepdims=True)
@@ -848,6 +929,10 @@ class SemanticForest:
             # Δτ = fitness / path_length (fitness는 F1 기반)
             delta_tau = rule.fitness / len(raw)
 
+            # Cost-sensitive bonus: 소수 클래스(1) 정확 예측 시 2배 보강
+            if rule.prediction == 1 and rule.f1_score > 0:
+                delta_tau *= 2.0
+
             for i in range(len(raw) - 1):
                 u, v = raw[i], raw[i + 1]
                 if G.has_edge(u, v):
@@ -884,6 +969,27 @@ class SemanticForest:
         n_samples = len(feature_df)
         preds = np.full(n_samples, fill_value=-999, dtype=float)
 
+        if hasattr(self, 'device'):
+            import torch
+            with torch.no_grad():
+                X_eval = torch.tensor(feature_df.values, dtype=torch.float32, device=self.device)
+                preds_tensor = torch.full((n_samples,), -999.0, device=self.device)
+                unassigned_mask = torch.ones(n_samples, dtype=torch.bool, device=self.device)
+                feat_cols = list(feature_df.columns)
+                
+                for rule in rules:
+                    if not unassigned_mask.any():
+                        break
+                    mask = rule.evaluate_tensor(X_eval, feat_cols)
+                    apply_mask = mask & unassigned_mask
+                    
+                    if apply_mask.any() and rule.prediction is not None:
+                        preds_tensor[apply_mask] = float(rule.prediction)
+                        unassigned_mask &= ~apply_mask
+                
+                return preds_tensor.cpu().numpy()
+                
+        # ── CPU 강제 환경이거나 호환 실패 시 NumPy / Pandas Fallback ──
         for idx in range(n_samples):
             row = {
                 col: feature_df.iloc[idx][col] for col in feature_df.columns
@@ -899,13 +1005,12 @@ class SemanticForest:
     def _predict_majority(self, feature_df: pd.DataFrame) -> np.ndarray:
         """리프 확률 기반 다수결 예측.
 
-        predict_proba()로 확률을 구한 뒤 threshold=0.5로 분류한다.
+        predict_proba()로 확률을 구한 뒤 최적 임계값(optimal_threshold)으로 분류한다.
         이전의 hard-vote 방식 대비 리프 노드 비율을 반영하므로
         mode collapse를 방지한다.
         """
         proba = self.predict_proba(feature_df)
-        # proba[:, 1] >= 0.5 이면 class 1, 아니면 class 0
-        preds = (proba[:, 1] >= 0.5).astype(int)
+        preds = (proba[:, 1] >= getattr(self, '_optimal_threshold', 0.5)).astype(int)
         return preds
 
     def _predict_weighted(self, feature_df: pd.DataFrame) -> np.ndarray:
@@ -928,10 +1033,11 @@ class SemanticForest:
                     weight_accum[i] += weight
 
         final_preds = np.full(n_samples, fill_value=self._default_prediction)
+        opt_thresh = getattr(self, '_optimal_threshold', 0.5)
         for i in range(n_samples):
             if weight_accum[i] > 0:
                 avg_p1 = proba_accum[i, 1] / weight_accum[i]
-                final_preds[i] = 1 if avg_p1 >= 0.5 else 0
+                final_preds[i] = 1 if avg_p1 >= opt_thresh else 0
             else:
                 final_preds[i] = self._default_prediction
 

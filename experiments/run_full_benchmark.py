@@ -158,6 +158,13 @@ def parse_args():
         description="ACO-Semantic-Forest Full Benchmark Runner"
     )
     p.add_argument(
+        "--task-type",
+        type=str,
+        default="all",
+        choices=["all", "classification", "regression"],
+        help="Task type to run: classification, regression, or all (default: all)",
+    )
+    p.add_argument(
         "--datasets",
         nargs="*",
         default=None,
@@ -352,11 +359,34 @@ def run_benchmark(args):
     )
 
     # ── Build task list ──
-    if args.targets and args.datasets and len(args.datasets) == 1:
-        # Specific dataset + specific targets
-        tasks = [(args.datasets[0], t) for t in args.targets]
+    classification_datasets = ["bbbp", "bace", "clintox", "sider", "tox21", "hiv"]
+    regression_datasets = [
+        "esol", "freesolv", "lipophilicity", "qm7", "qm8", "qm9"
+    ]
+
+    # Determine which datasets to include based on task type
+    if args.task_type == "classification":
+        allowed_datasets = classification_datasets
+    elif args.task_type == "regression":
+        allowed_datasets = regression_datasets
     else:
-        tasks = pipeline.get_all_tasks(args.datasets)
+        allowed_datasets = classification_datasets + regression_datasets
+
+    # If user specified datasets, filter by allowed_datasets
+    filtered_datasets = None
+    if args.datasets:
+        filtered_datasets = [ds for ds in args.datasets if ds in allowed_datasets]
+        if not filtered_datasets:
+            log(f"No datasets match the selected task type '{args.task_type}'. Exiting.")
+            return
+    else:
+        filtered_datasets = allowed_datasets
+
+    if args.targets and filtered_datasets and len(filtered_datasets) == 1:
+        # Specific dataset + specific targets
+        tasks = [(filtered_datasets[0], t) for t in args.targets]
+    else:
+        tasks = pipeline.get_all_tasks(filtered_datasets)
 
     total = len(tasks)
     log(f"Total tasks: {total}")
@@ -420,10 +450,13 @@ def run_benchmark(args):
                 "pig_alpha": args.pig_alpha,
                 "semantic_weight": args.semantic_weight,
                 "seed": args.seed,
-                "fixed_rules": loaded_fixed_rules,
             }
-
+            # Only add fixed_rules if not None and if pipeline.run accepts it
             run_params = inspect.signature(pipeline.run).parameters
+            if loaded_fixed_rules is not None and "fixed_rules" in run_params:
+                run_kwargs["fixed_rules"] = loaded_fixed_rules
+
+
             if "compute_backend" in run_params:
                 run_kwargs["compute_backend"] = args.compute_backend
             if "torch_device" in run_params:
@@ -500,12 +533,14 @@ def run_benchmark(args):
                 log(f"  R\u00b2         : {r2:.4f}")
             else:
                 auc = result.get("test_auc_roc", -1)
+                prc = result.get("test_prc_auc", -1)
                 f1 = result.get("test_f1_majority", 0)
                 bal_acc = result.get("test_balanced_accuracy_majority", 0)
                 prec = result.get("test_precision_majority", 0)
                 rec = result.get("test_recall_majority", 0)
 
                 log(f"  AUC-ROC    : {auc:.4f}")
+                log(f"  PRC-AUC    : {prc:.4f}")
                 log(f"  F1         : {f1:.4f}")
                 log(f"  BalAcc     : {bal_acc:.4f}")
                 log(f"  Precision  : {prec:.4f}")
@@ -549,8 +584,8 @@ def run_benchmark(args):
 
     # ── Summary table ──
     # Classification header
-    cls_header = f"{'Dataset':12s} {'Target':35s} {'AUC-ROC':>8s} {'F1':>8s} {'BalAcc':>8s} {'Prec':>8s} {'Rec':>8s} {'Time':>7s} {'Status':>8s}"
-    reg_header = f"{'Dataset':12s} {'Target':35s} {'MAE':>10s} {'RMSE':>10s} {'R\u00b2':>8s} {'Time':>7s} {'Status':>8s}"
+    cls_header = f"{'Dataset':12s} {'Target':35s} {'AUC-ROC':>8s} {'PRC-AUC':>8s} {'F1':>8s} {'BalAcc':>8s} {'Prec':>8s} {'Rec':>8s} {'Time':>7s} {'Status':>8s}"
+    reg_header = f"{'Dataset':12s} {'Target':35s} {'MAE':>10s} {'RMSE':>10s} {'R²':>8s} {'Time':>7s} {'Status':>8s}"
     cls_sep = "-" * len(cls_header)
     reg_sep = "-" * len(reg_header)
 
@@ -567,14 +602,15 @@ def run_benchmark(args):
             status = r.get("status", "?")
             if status == "complete":
                 auc = r.get("test_auc_roc", -1)
+                prc = r.get("test_prc_auc", -1)
                 f1 = r.get("test_f1_majority", 0)
                 ba = r.get("test_balanced_accuracy_majority", 0)
                 pr = r.get("test_precision_majority", 0)
                 rc = r.get("test_recall_majority", 0)
                 tm = r.get("total_time_sec", 0)
-                log(f"{ds:12s} {tgt:35s} {auc:8.4f} {f1:8.4f} {ba:8.4f} {pr:8.4f} {rc:8.4f} {tm:6.1f}s {'OK':>8s}")
+                log(f"{ds:12s} {tgt:35s} {auc:8.4f} {prc:8.4f} {f1:8.4f} {ba:8.4f} {pr:8.4f} {rc:8.4f} {tm:6.1f}s {'OK':>8s}")
             else:
-                log(f"{ds:12s} {tgt:35s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>7s} {'FAIL':>8s}")
+                log(f"{ds:12s} {tgt:35s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>8s} {'---':>7s} {'FAIL':>8s}")
         log(cls_sep)
 
     if reg_results:
@@ -648,7 +684,7 @@ def run_benchmark(args):
         "dataset", "target", "task", "status",
         "n_samples", "n_train", "n_test", "n_features",
         "n_trees", "n_rules", "fit_time_sec", "total_time_sec",
-        "test_auc_roc",
+        "test_auc_roc", "test_prc_auc",
         "test_f1_majority", "test_balanced_accuracy_majority",
         "test_precision_majority", "test_recall_majority",
         "test_accuracy_majority", "test_f1_weighted",

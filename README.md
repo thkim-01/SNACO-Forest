@@ -168,6 +168,21 @@ python experiments/run_full_benchmark.py --fixed-rules-dir output/my_fixed_rules
 > **규칙 비교 리포트 기능**: `--fixed-rules-dir` 옵션을 사용하여 고정 규칙을 주입하고 실험이 실행된 경우, 해당 데이터셋의 `--export-rules-dir`(기본 `output/benchmark_rules/`) 쪽에 `_comparison.md` 파일명으로 마크다운 표 리포트가 자동 생성됩니다. 
 이를 통해 규칙 고정/주입에 따른 학습 성능(AUC, F1, Accuracy, MAE 등)의 증감 차이를 명확하게 모니터링할 수 있습니다.
 
+### 5. 고속화 및 최적화 기능 (PyTorch Tensor & Multiprocessing)
+
+최근 업데이트로 학습 및 추론 속도 개선과 불균형 데이터셋에 대한 성능 지표 최적화가 이루어졌습니다.
+- **PyTorch 텐서 기반 평가**: GPU/CPU 환경에서 트리/규칙 기반 텐서 병렬 연산을 지원하여 대규모 데이터 처리 속도를 극대화했습니다.
+- **멀티프로세싱 (`--n-jobs`)**: 다중 코어를 활용하여 데이터셋 및 태스크 단위 병렬 처리가 가능해졌습니다.
+- **비대칭 성능 강화**: 소수 클래스에 대한 Cost-sensitive 학습 및 동적인 Optimal Threshold 탐색, 그리고 PRC-AUC (Precision-Recall AUC) 지표 측정을 지원합니다.
+
+```bash
+# PyTorch 백엔드를 이용한 추론 및 예측 가속 (GPU 자동 할당)
+python experiments/run_full_benchmark.py --compute-backend torch --torch-device auto
+
+# 멀티프로세싱 기반의 빠른 앙상블 학습 진행 (n-jobs)
+python experiments/run_full_benchmark.py --n-jobs 4
+```
+
 ## 버전 구조
 
 ```text
@@ -181,67 +196,7 @@ experiments/
 	run_semantic_forest_lab.py
 ```
 
-## 알고리즘 설명
-
-### ID3 (Iterative Dichotomiser 3)
-
-- **분할 기준**: Information Gain을 사용하여 최적의 분할 지점 선택
-- **Entropy**: $H(S) = -\sum_{i=1}^{n} p_i \log_2 p_i$
-- **Information Gain**: $IG(S, A) = H(S) - \sum_{v \in Values(A)} \frac{|S_v|}{|S|} H(S_v)$
-- **특징**: 해석이 직관적이며 엔트로피 기반으로 불확실성 감소를 최대화
-
-### C4.5
-
-- **분할 기준**: Gain Ratio
-- **핵심 아이디어**: Information Gain을 split info로 정규화
-
-### C5.0
-
-- **분할 기준**: Gain Ratio (`gain_ratio`)
-- **핵심 아이디어**: C4.5의 Gain Ratio 기반 분할을 계승한 실험 프로파일
-- **구현 매핑**: 러너 옵션 `--algorithm c5.0` / `--algorithm c50` → `gain_ratio`
-
-### CART
-
-- **분할 기준**: Gini impurity
-- **Gini impurity**: $Gini = 1 - \sum_{i=1}^{n} p_i^2$
-
-### CHAID
-
-- **분할 기준**: Chi-square (`chi_square`)
-- **핵심 아이디어**: 분할 전/후 클래스 분포 차이를 카이제곱 통계량으로 평가
-- **구현 매핑**: 러너 옵션 `--algorithm chaid` → `chi_square`
-
-### PIG (Penalized Information Gain)
-
-- **분할 기준**: 온톨로지 계층 깊이 기반 Taxonomic Informativeness로 Information Gain을 보정
-- **핵심 수식**:
-  - $IC(c) = -\log_2 P(c)$, where $P(c) = \frac{|\text{descendants}(c)|}{|\text{total concepts}|}$
-  - $TI(c) = IC(c) \times \frac{\text{depth}(c)}{\text{max\_depth}}$
-  - $ATI = \frac{1}{|C|} \sum_{c \in C} TI(c)$ (Average Taxonomic Informativeness)
-  - $PIG(S) = IG(S) \times (1 + \log(1 + \alpha \times ATI))$
-- **하이퍼파라미터**: `--pig-alpha` (기본값 1.0) — ATI 가중치
-- **구현 매핑**: `--algorithm pig` → `pig`
-- **특징**: 온톨로지 계층에서 더 구체적(깊은) 개념을 사용하는 분할에 높은 점수 부여
-
-### Semantic Similarity (의미적 유사도 기반 분할)
-
-- **분할 기준**: Wu-Palmer 유사도를 이용한 온톨로지 거리 기반 분할 점수
-- **핵심 수식**:
-  - $Sim_{WP}(a, b) = \frac{2 \times \text{depth}(LCA(a,b))}{\text{depth}(a) + \text{depth}(b)}$
-  - $Sim(A) = \sum_u p_u \times Sim_{avg}(a_u)$ (파티션별 가중 유사도 합)
-- **구현 매핑**: `--algorithm semantic_similarity` / `--algorithm semantic_sim` → `semantic_similarity`
-- **특징**: 같은 파티션에 속한 인스턴스들이 온톨로지적으로 유사한 분할을 선호
-
-### PIG + Semantic (결합)
-
-- **분할 기준**: PIG와 Semantic Similarity의 가중 결합
-- **핵심 수식**: $\text{Score} = (1 - w) \times PIG + w \times Sim(A) \times IG_{\max}$
-- **하이퍼파라미터**: `--pig-alpha` (기본값 1.0), `--semantic-weight` (기본값 0.3, 범위 0~1)
-- **구현 매핑**: `--algorithm pig_semantic` → `pig_semantic`
-- **특징**: 두 온톨로지 신호를 동시에 활용하여 분할 품질 극대화
-
-### 처리 과정
+## 처리 과정
 
 1. **입력**: `data/` 디렉토리의 CSV 파일 (예: `data/bbbp/BBBP.csv`)
 2. **전처리**: SMILES → RDKit을 통한 분자 피처 추출

@@ -1,0 +1,180 @@
+% 한글 레이텍스 두단 논문 초안
+\documentclass[11pt, twocolumn]{article}
+\usepackage[utf-8]{inputenc}
+\usepackage[hangul]{babel}
+\usepackage{kotex}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{cite}
+\usepackage{xcolor}
+
+% 페이지 설정
+\geometry{
+    top=2cm,
+    bottom=2cm,
+    left=1.5cm,
+    right=1.5cm,
+    columnsep=0.8cm
+}
+
+% 제목 스타일
+\title{의미론적 숲 모델에 대한 리뷰 대응: \\
+해석 가능성, 하이브리드 아키텍처, 성능 분해 분석}
+\author{ACO Semantic Forest Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{개요}
+
+본 문서는 의미론적 숲(Semantic Forest) 모델의 핵심 설계 선택과 성능 분석에 대한 리뷰어의 예상 질문에 대한 답변 초안입니다. 
+네 가지 주요 질문에 대해 이론적 근거, 실험 증거, 그리고 추가 분석 방향을 제시합니다.
+
+\section{Q1: Neural Network 기반 Tree를 사용하지 않은 이유}
+
+\subsection{핵심 입장}
+
+본 연구의 주요 목표는 예측 성능 극대화가 아닌 \textbf{해석 가능성과 온톨로지 정합성}에 있습니다. 
+Neural-tree 계열 모델(예: SAINT, XGBoost with neural splits)은 높은 성능을 제공하지만, 다음의 단점이 있습니다:
+
+\begin{itemize}
+    \item 모델 복잡도 증가에 따른 규칙 추적 어려움
+    \item 노드 단위 의미 해석 불명확
+    \item 의료/과학 도메인에서의 신뢰성 감소
+\end{itemize}
+
+\subsection{본 방법의 장점}
+
+반면 Semantic-rule tree 기반 접근은:
+
+\begin{enumerate}
+    \item \textbf{규칙의 투명성}: 각 분할이 온톨로지 기반 개념과 직접 연결
+    \item \textbf{제한 데이터 구간 안정성}: 중소 규모 데이터셋에서 재현성 우수
+    \item \textbf{계산 효율성}: 재현 가능한 학습, 모듈식 확장 가능
+\end{enumerate}
+
+\subsection{제안된 검증 방법}
+
+\begin{itemize}
+    \item 복잡도-성능-해석성 3축 트레이드오프 표
+    \item 다중 랜덤 시드 실험으로 안정성 검증
+    \item 규칙 충실도(faithfulness) 사례 분석
+\end{itemize}
+
+\section{Q2: 딥러닝 모델과의 결합 가능성 및 시각화 차이}
+
+\subsection{하이브리드 아키텍처 제안}
+
+성능 개선을 위해 두 단계 파이프라인을 제시합니다:
+
+\[
+\text{입력} \xrightarrow{\text{Deep Encoder}} \text{표현} \xrightarrow{\text{Semantic Tree}} \text{규칙 경로} \rightarrow \text{의사결정}
+\]
+
+깊은 신경망이 복잡한 패턴을 압축하고, 트리가 최종 판단을 투명한 규칙으로 제시합니다.
+
+\subsection{시각화 비교}
+
+\begin{table}[h]
+    \centering
+    \small
+    \begin{tabular}{|l|l|l|}
+    \hline
+    \textbf{기준} & \textbf{딥러닝} & \textbf{Semantic Tree / 하이브리드} \\
+    \hline
+    중심 설명 & saliency, attribution & 규칙 경로, 개념 기여도 \\
+    \hline
+    입도(granularity) & 픽셀/특징 & 의사결정 노드/규칙 \\
+    \hline
+    도메인 정합성 & 낮음 & 높음 \\
+    \hline
+    \end{tabular}
+\end{table}
+
+\subsection{기대 효과}
+
+하이브리드 모델에서는 두 가지 설명 채널을 동시 제시:
+\begin{enumerate}
+    \item 인코더의 특징 중요도 (표현 수준)
+    \item 트리의 규칙 경로 (개념 수준)
+\end{enumerate}
+
+\section{Q3: 대규모 데이터에서 성능 저하 시 설명 가능성}
+
+\subsection{성능 저하가 항상 부정적인가?}
+
+아니오. 성능 저하가 발생해도 설명 시각화는 오히려 더 중요해집니다.
+
+\subsection{원인 분해 분석}
+
+성능 저하를 단순 알고리즘 한계가 아닌 \textbf{구조적 원인}으로 분석:
+
+\begin{itemize}
+    \item \textbf{분포 이동(Distribution shift)}: 데이터 특성 변화 추적
+    \item \textbf{레이블 노이즈}: 신뢰도 낮은 샘플 식별
+    \item \textbf{의미론 커버리지}: 온톨로지 개념 활용도 분석
+    \item \textbf{모델 용량 부족}: 디이터 복잡도 vs. 모델 복잡도 비교
+\end{itemize}
+
+\subsection{제안된 시각화}
+
+\begin{enumerate}
+    \item 학습 곡선: 데이터 크기별 성능 추세
+    \item 오류 분해: 클래스/부분군별 실패 패턴
+    \item 개념 맵: 온톨로지 영역별 규칙 밀도
+    \item 신뢰도 대역: 예측 불확실성 시각화
+\end{enumerate}
+
+\section{Q4: 규칙 분할 기준과 매개변수 기여도}
+
+\subsection{단순 보팅인가?}
+
+절대 아닙니다. 분할 결정은 \textbf{다항 목적함수} 기반입니다:
+
+\[
+\text{Objective} = \alpha \cdot \text{Gain} + \beta \cdot \text{Semantic\_Fit} + \gamma \cdot \text{Regularization}
+\]
+
+여기서:
+\begin{itemize}
+    \item $\text{Gain}$: 정보 이득, 불순도 감소
+    \item $\text{Semantic\_Fit}$: 온톨로지 정합성
+    \item $\text{Regularization}$: 복잡도 페널티
+\end{itemize}
+
+\subsection{규칙 기여도 정량화}
+
+각 규칙의 영향력을 네 가지 방식으로 측정:
+
+\begin{enumerate}
+    \item \textbf{경로 누적 기여도}: 해당 규칙 포함 경로의 예측 개선량
+    \item \textbf{부트스트랩 안정성}: 반복 학습에서 선택 빈도
+    \item \textbf{제거 영향도}: 규칙 제거 시 성능 저하 폭
+    \item \textbf{특징 중요도 변화}: SHAP, permutation importance 등
+\end{enumerate}
+
+\subsection{결론}
+
+규칙은 정량적 다목적 최적화 기반으로 선택되며, 단순 성능 보팅이 아닌 
+\textbf{예측력 + 의미론적 타당성}의 균형 적용입니다.
+
+\section{향후 실험 계획}
+
+\begin{enumerate}
+    \item 하이브리드 구조 구현 및 성능 비교 (DL pure vs. 본 방법 vs. 하이브리드)
+    \item 대규모 데이터 성능 분해 분석
+    \item 규칙 기여도 대시보드 구현
+    \item 도메인 전문가 설명력 평가 (정성 실험)
+\end{enumerate}
+
+\section{결론}
+
+본 모델의 설계는 최고 성능보다 \textbf{해석 가능성과 신뢰성 중심} 선택입니다. 
+각 리뷰 질문에 대해 구체적 이론적 근거, 예상 실험 증거, 그리고 성능-설명력 균형 전략을 제시했습니다.
+
+\end{document}

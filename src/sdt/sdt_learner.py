@@ -19,7 +19,6 @@ from src.refinement.dl_refinement_generator import RefinementGenerator
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 class SDTNode:
     """논문 SDT의 노드 (Center Class 기반)"""
     
