@@ -183,6 +183,20 @@ python experiments/run_full_benchmark.py --compute-backend torch --torch-device 
 python experiments/run_full_benchmark.py --n-jobs 4
 ```
 
+### 6. 논문용 Figure 시각화 (Visualization Scripts)
+
+논문 작성에 필요한 Semantic Network 구조와 ACO 탐색 과정을 시각화하는 전용 스크립트가 `scripts/` 폴더에 제공됩니다.
+- **ChEBI Ontology Network 시각화**: `visualize_chebi_semantic_network.py` (루트 컨셉 기반 BFS 탐색 및 Spring/Hierarchy 레이아웃 시각화)
+- **ACO 탐색 과정 시각화**: `generate_aco_figure_candidates.py` (Pheromone 업데이트, DL Rule Trace 등 탐색 타임라인별 Figure 생성)
+
+```bash
+# ChEBI 네트워크 시각화 결과 생성 (output/figures/chebi_semantic_network.png)
+python scripts/visualize_chebi_semantic_network.py --layout-mode spring
+
+# ACO 알고리즘 탐색 시각화 후보군 생성 (output/figures/aco_candidates/)
+python scripts/generate_aco_figure_candidates.py
+```
+
 ## 버전 구조
 
 ```text
